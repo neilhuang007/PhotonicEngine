@@ -1,7 +1,6 @@
 package at.redi2go.photonics.core.rendering.world.block.palette;
 
 import it.unimi.dsi.fastutil.ints.IntList;
-import it.unimi.dsi.fastutil.objects.Object2ObjectMap;
 
 import java.util.AbstractList;
 import java.util.List;
@@ -25,9 +24,7 @@ public class BlockPalette extends AbstractList<PaletteEntry> {
     public int getIndex(MutablePaletteEntry entry) {
         if (entry == null) return 0;
 
-        return mapping.get(entry)
-                .actualize()
-                .getIndex(entry.tint) + 1;
+        return mapping.get(entry).getIndex(entry.tint) + 1;
     }
 
     @Override
@@ -37,7 +34,7 @@ public class BlockPalette extends AbstractList<PaletteEntry> {
 
     @Override
     public PaletteEntry get(int index) {
-        return entries.get(index).actualize();
+        return entries.get(index);
     }
 
     public int getTint(int index) {

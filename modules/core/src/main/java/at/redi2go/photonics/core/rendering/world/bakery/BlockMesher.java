@@ -5,14 +5,18 @@ import at.redi2go.photonics.api.mc.core.IBlockPos;
 import at.redi2go.photonics.api.mc.world.level.IBlock;
 import at.redi2go.photonics.api.mc.world.level.IBlockAndTintGetter;
 import at.redi2go.photonics.api.mc.world.level.IBlockState;
-import at.redi2go.photonics.core.rendering.world.WorldOrigin;
 import it.unimi.dsi.fastutil.objects.Object2ObjectMap;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
+import org.joml.Vector3i;
 
 import java.util.Optional;
 
 public interface BlockMesher {
     Registry REGISTRY = new Registry();
+
+    default void setup() {
+
+    }
 
     /**
      * Meshes a block at {@code pos} with {@code blockState}.
@@ -20,12 +24,16 @@ public interface BlockMesher {
      * @apiNote {@code VertexBuilder} only accepts quads
      */
     void meshBlock(
-            WorldOrigin origin,
+            Vector3i blockChunkOffset,
             IBlockPos pos,
             IBlockState blockState,
             IBlockAndTintGetter blockAndTintGetter,
-            VertexBuilder vertexBuilder
+            BlockBuilder blockBuilder
     );
+
+    default void teardown() {
+
+    }
 
     class Registry {
         private final Object2ObjectMap<Id, BlockMesher> blockRegistry = new Object2ObjectOpenHashMap<>();
@@ -34,6 +42,28 @@ public interface BlockMesher {
 
         Registry() {
 
+        }
+
+        public void setup() {
+            for (var e : blockRegistry.values())
+                e.setup();
+
+            for (var e : namespaceRegistry.values())
+                e.setup();
+
+            if (defaultMesher != null)
+                defaultMesher.setup();
+        }
+
+        public void teardown() {
+            for (var e : blockRegistry.values())
+                e.teardown();
+
+            for (var e : namespaceRegistry.values())
+                e.teardown();
+
+            if (defaultMesher != null)
+                defaultMesher.teardown();
         }
 
         public void addBlock(Id id, BlockMesher mesher) {

@@ -1,0 +1,168 @@
+package at.redi2go.photonics.core.rendering.world.compiler;
+
+import at.redi2go.photonics.api.Disposable;
+import at.redi2go.photonics.api.mc.Minecraft;
+import at.redi2go.photonics.api.mc.core.IBlockPos;
+import at.redi2go.photonics.api.mc.world.level.ILevel;
+import at.redi2go.photonics.core.Photonics;
+import at.redi2go.photonics.core.rendering.world.BlockRegistry;
+import at.redi2go.photonics.core.rendering.world.IgnoredInterruptedException;
+import at.redi2go.photonics.core.rendering.world.bakery.BlockBakery;
+import at.redi2go.photonics.core.rendering.world.bakery.impl.BlockBakeryImpl;
+import at.redi2go.photonics.core.rendering.world.bakery.texture.AtlasDownloader;
+import org.joml.Vector3i;
+
+import java.util.Objects;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ConcurrentMap;
+
+public class ChunkCompiler implements Runnable, Disposable {
+    private static final int THREAD_COUNT = 2;
+
+    private final SectionManager sectionManager;
+    private final AtlasDownloader atlasDownloader;
+    private final BlockRegistry blockRegistry;
+
+    private final ConcurrentMap<Vector3i, Long> sectionHashes = new ConcurrentHashMap<>();
+    private final Queue<BlockBakery> bakeryQueue = new ConcurrentLinkedQueue<>();
+
+    private final Thread[] threads = new Thread[THREAD_COUNT];
+
+    public ChunkCompiler(
+            SectionManager sectionManager,
+            AtlasDownloader atlasDownloader,
+            BlockRegistry blockRegistry
+    ) {
+        this.sectionManager = sectionManager;
+        this.atlasDownloader = atlasDownloader;
+        this.blockRegistry = blockRegistry;
+
+        for (int i = 0; i < THREAD_COUNT; i++) {
+            var thread = new Thread(this, "Photonic Chunk Compiler #" + i);
+            threads[i] = thread;
+
+            thread.setDaemon(false);
+            thread.start();
+        }
+    }
+
+    private BlockBakery nextBakery() {
+        var bakery = bakeryQueue.poll();
+        if (bakery == null)
+            bakery = new BlockBakeryImpl(atlasDownloader, blockRegistry);
+
+        bakery.reset();
+        return bakery;
+    }
+
+    private void releaseBakery(BlockBakery bakery) {
+        bakeryQueue.offer(bakery);
+    }
+
+    @Override
+    public void run() {
+        try {
+            while (!Thread.interrupted()) {
+                var section = sectionManager.sectionMeshQueue().take();
+                unloadChunks();
+
+                var bakery = nextBakery();
+
+                Vector3i sectionBlockPos = section.pos().mul(16, new Vector3i());
+                Vector3i blockChunkOffset = new Vector3i();
+
+                long hash = 0;
+
+                ILevel level = Minecraft.getLevel();
+                if (level == null) {
+                    releaseBakery(bakery);
+                    continue;
+                }
+
+                for (int px = 0; px < 16; px++) {
+                    for (int py = 0; py < 16; py++) {
+                        for (int pz = 0; pz < 16; pz++) {
+                            var blockPos = IBlockPos.of(
+                                    sectionBlockPos.x + px,
+                                    sectionBlockPos.y + py,
+                                    sectionBlockPos.z + pz
+                            );
+
+                            var block = section.getBlockState(px, py, pz);
+                            hash = hash * 31 + block.hashCode();
+
+                            if (block.isAir()) continue;
+
+                            blockChunkOffset.set(px, py, pz);
+
+                            bakery.submitBlock(
+                                    blockChunkOffset,
+                                    blockPos,
+                                    block,
+                                    level
+                            );
+                        }
+                    }
+                }
+
+                if (Objects.equals(sectionHashes.put(section.pos(), hash), hash)) {
+                    releaseBakery(bakery);
+                    continue;
+                }
+
+                sectionManager.builtSections().offer(section.pos(), new BuildResult(section.pos(), sectionBlockPos, bakery));
+            }
+        } catch (InterruptedException | IgnoredInterruptedException e) {
+
+        } catch (Throwable e) {
+            Photonics.LOGGER.warn("An exception was throw during chunk compilation!", e);
+        }
+    }
+
+    private void unloadChunks() {
+        var unloadQueue = sectionManager.chunkUnloadedSections();
+        while (!unloadQueue.isEmpty()) {
+            var section = unloadQueue.poll();
+            if (section == null) continue;
+
+            sectionHashes.remove(section);
+        }
+    }
+
+    @Override
+    public void close() {
+        for (var thread : threads)
+            thread.interrupt();
+    }
+
+    public class BuildResult implements Disposable {
+        private final Vector3i chunkPos;
+        private final Vector3i chunkBlockPos;
+        private final BlockBakery bakery;
+
+        public BuildResult(Vector3i chunkPos, Vector3i chunkBlockPos, BlockBakery bakery) {
+            this.chunkPos = chunkPos;
+            this.chunkBlockPos = chunkBlockPos;
+            this.bakery = bakery;
+        }
+
+        public Vector3i chunkPos() {
+            return chunkPos;
+        }
+
+        public Vector3i chunkBlockPos() {
+            return chunkBlockPos;
+        }
+
+        public BlockBakery bakery() {
+            return bakery;
+        }
+
+        @Override
+        public void close() {
+            releaseBakery(bakery);
+        }
+    }
+}
