@@ -1,12 +1,18 @@
 package at.redi2go.photonics.core.rendering.world.compiler;
 
-import at.redi2go.photonics.api.Disposable;
 import at.redi2go.photonics.api.gpu.buffers.heap.IGpuBufferHeap;
 import at.redi2go.photonics.api.mc.Minecraft;
 import at.redi2go.photonics.core.Photonics;
+import at.redi2go.photonics.core.iris.pipeline.buffer.IBufferHolder;
+import at.redi2go.photonics.core.iris.pipeline.uniform.IDynamicUniformHolder;
+import at.redi2go.photonics.core.rendering.RenderingComponent;
+import at.redi2go.photonics.core.rendering.SectionManager;
+import at.redi2go.photonics.core.rendering.ThreadRunnable;
+import at.redi2go.photonics.core.rendering.UniformUpdater;
 import at.redi2go.photonics.core.rendering.world.BlockRegistry;
 import at.redi2go.photonics.core.rendering.world.IgnoredInterruptedException;
 import at.redi2go.photonics.core.rendering.world.WorldOrigin;
+import at.redi2go.photonics.core.rendering.world.block.palette.PaletteTexture;
 import at.redi2go.photonics.core.rendering.world.tree.ChunkVoxel;
 import at.redi2go.photonics.core.rendering.world.tree.WorldVoxel;
 import it.unimi.dsi.fastutil.shorts.ShortOpenHashSet;
@@ -28,16 +34,18 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.function.IntSupplier;
 
-public class WorldCompiler implements Runnable, Disposable {
+public class WorldCompiler implements Runnable, RenderingComponent {
     public static final int MAX_SECTIONS_PER_RUN = 12;
 
     private static final int THREAD_POOL_SIZE = 3;
     private static final ExecutorService THREAD_POOL;
 
-    private final IntSupplier renderDistanceSupplier;
-    private final SectionManager sectionManager;
+    private final Queue<Vector3i> unloadQueue;
+    private final SectionManager.TaskQueue<ChunkCompiler.BuildResult> builtSectionQueue;
+
+    private final IGpuBufferHeap heap;
+    private final PaletteTexture paletteTexture;
     private final BlockRegistry registry;
 
     private final Queue<WorldVoxel> uploadQueue;
@@ -54,6 +62,8 @@ public class WorldCompiler implements Runnable, Disposable {
     private final Vector3i minVoxel = new Vector3i();
     private final Vector3i maxVoxel = new Vector3i();
 
+    private final UniformUpdater uniformUpdater = new UniformUpdater();
+
     private WorldOrigin mostRecentOrigin;
     private Vector3f mostRecentMinVoxel = new Vector3f();
     private Vector3f mostRecentMaxVoxel = new Vector3f();
@@ -62,13 +72,16 @@ public class WorldCompiler implements Runnable, Disposable {
 
     public WorldCompiler(
             int depth,
-            IntSupplier renderDistanceSupplier,
             SectionManager sectionManager,
-            BlockRegistry blockRegistry,
-            IGpuBufferHeap heap
+            SectionManager.TaskQueue<ChunkCompiler.BuildResult> builtSectionQueue,
+            IGpuBufferHeap heap,
+            PaletteTexture paletteTexture,
+            BlockRegistry blockRegistry
     ) {
-        this.renderDistanceSupplier = renderDistanceSupplier;
-        this.sectionManager = sectionManager;
+        this.unloadQueue = sectionManager.newUnloadQueue();
+        this.builtSectionQueue = builtSectionQueue;
+        this.heap = heap;
+        this.paletteTexture = paletteTexture;
         this.registry = blockRegistry;
 
         this.uploadQueue = new ConcurrentLinkedQueue<>();
@@ -78,21 +91,13 @@ public class WorldCompiler implements Runnable, Disposable {
         this.compilerThread.start();
     }
 
-    private void setOrigin(Vector3i origin) {
-        this.iorigin = origin;
-        this.origin = new WorldOrigin(origin.x, origin.y, origin.z);
-    }
-
     public WorldOrigin origin() {
         return mostRecentOrigin;
     }
 
-    public Vector3f minVoxel() {
-        return mostRecentMinVoxel;
-    }
-
-    public Vector3f maxVoxel() {
-        return mostRecentMaxVoxel;
+    private void setOrigin(Vector3i origin) {
+        this.iorigin = origin;
+        this.origin = new WorldOrigin(origin.x, origin.y, origin.z);
     }
 
     @Override
@@ -104,7 +109,7 @@ public class WorldCompiler implements Runnable, Disposable {
 
                 registry.freeUnusedBlocks();
 
-                var sections = sectionManager.builtSections().drain(MAX_SECTIONS_PER_RUN);
+                var sections = builtSectionQueue.drain(MAX_SECTIONS_PER_RUN);
                 recenter();
 
                 clearPendingSections(sections);
@@ -125,7 +130,6 @@ public class WorldCompiler implements Runnable, Disposable {
     private void unloadSections() {
         if (iorigin == null) return;
 
-        var unloadQueue = sectionManager.worldUnloadedSections();
         while (!unloadQueue.isEmpty()) {
             var sectionCoord = unloadQueue.remove();
             Vector3i sectionVoxelPos = sectionCoord.mul(16, new Vector3i())
@@ -142,7 +146,7 @@ public class WorldCompiler implements Runnable, Disposable {
     }
 
     private void recenter() throws InterruptedException {
-        var newOrigin = getWorldOrigin(Minecraft.getCameraPos(), renderDistanceSupplier.getAsInt() + 8);
+        var newOrigin = WorldOrigin.getAsVector3i();
         if (iorigin == null) {
             setOrigin(newOrigin);
             return;
@@ -241,19 +245,23 @@ public class WorldCompiler implements Runnable, Disposable {
 
         try {
             canUpload = true;
+            uniformUpdater.updateNextFrame();
             uploadDone.await();
         } finally {
             uploadLock.unlock();
         }
     }
 
-    public void doUpload(Runnable uploadRunnable) {
+    @Override
+    public void onFrameBegin() {
         uploadLock.lock();
 
         try {
             if (!canUpload) return;
 
-            uploadRunnable.run();
+            heap.upload();
+            paletteTexture.upload();
+            uniformUpdater.updateAll();
 
             mostRecentOrigin = origin;
 
@@ -264,6 +272,36 @@ public class WorldCompiler implements Runnable, Disposable {
         } finally {
             uploadLock.unlock();
         }
+    }
+
+    @Override
+    public void registerDynamicUniforms(IDynamicUniformHolder dynamicUniforms) {
+        dynamicUniforms.uniform3f(
+                "world_offset",
+                () -> {
+                    var offset = mostRecentOrigin;
+                    if (offset == null) return new Vector3f(0f);
+
+                    return new Vector3f(offset);
+                },
+                uniformUpdater.newNotifier()
+        );
+
+        dynamicUniforms.uniform3f("world_min_voxel", () -> mostRecentMinVoxel, uniformUpdater.newNotifier());
+        dynamicUniforms.uniform3f("world_max_voxel", () -> mostRecentMaxVoxel, uniformUpdater.newNotifier());
+
+        dynamicUniforms.uniform3f("rt_camera_position", () -> {
+            var offset = mostRecentOrigin;
+            if (offset == null) return new Vector3f(0f);
+
+            var pos = Minecraft.getCameraPos();
+            return new Vector3f(offset.applyOffset(new Vector3d(pos.x, pos.y, pos.z)));
+        }, uniformUpdater.newNotifier());
+    }
+
+    @Override
+    public void registerBuffers(IBufferHolder buffers) {
+        buffers.addDefaultBufferHeap("ph_world_voxel_buffer", () -> heap);
     }
 
     // Chunk management
@@ -289,20 +327,6 @@ public class WorldCompiler implements Runnable, Disposable {
         int hash = chunkPos.hashCode();
         return (short) (hash ^ (hash >>> 16));
     }
-
-    private static int snapToSectionPos(int component, int renderDistance) {
-        var chunkPos = ((component >> 4) - renderDistance) << 4;
-        return (chunkPos >> 6) << 6;
-    }
-
-    private static Vector3i getWorldOrigin(Vector3d cameraPos, int renderDistance) {
-        return new Vector3i(
-                snapToSectionPos((int) cameraPos.x, renderDistance),
-                snapToSectionPos((int) cameraPos.y, renderDistance),
-                snapToSectionPos((int) cameraPos.z, renderDistance)
-        );
-    }
-
 
     // Tasks
 

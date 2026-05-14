@@ -5,6 +5,9 @@ import at.redi2go.photonics.api.mc.Minecraft;
 import at.redi2go.photonics.api.mc.core.IBlockPos;
 import at.redi2go.photonics.api.mc.world.level.ILevel;
 import at.redi2go.photonics.core.Photonics;
+import at.redi2go.photonics.core.rendering.RenderingComponent;
+import at.redi2go.photonics.core.rendering.SectionCopy;
+import at.redi2go.photonics.core.rendering.SectionManager;
 import at.redi2go.photonics.core.rendering.world.BlockRegistry;
 import at.redi2go.photonics.core.rendering.world.IgnoredInterruptedException;
 import at.redi2go.photonics.core.rendering.world.bakery.BlockBakery;
@@ -18,10 +21,13 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
 
-public class ChunkCompiler implements Runnable, Disposable {
+public class ChunkCompiler implements Runnable, RenderingComponent {
     private static final int THREAD_COUNT = 2;
 
-    private final SectionManager sectionManager;
+    private final Queue<Vector3i> unloadQueue;
+    private final SectionManager.TaskQueue<SectionCopy> sectionQueue;
+    private final SectionManager.TaskQueue<BuildResult> builtSectionQueue;
+
     private final AtlasDownloader atlasDownloader;
     private final BlockRegistry blockRegistry;
 
@@ -32,10 +38,14 @@ public class ChunkCompiler implements Runnable, Disposable {
 
     public ChunkCompiler(
             SectionManager sectionManager,
+            SectionManager.TaskQueue<BuildResult> builtSectionQueue,
             AtlasDownloader atlasDownloader,
             BlockRegistry blockRegistry
     ) {
-        this.sectionManager = sectionManager;
+        this.unloadQueue = sectionManager.newUnloadQueue();
+        this.sectionQueue = sectionManager.newSectionQueue();
+        this.builtSectionQueue = builtSectionQueue;
+
         this.atlasDownloader = atlasDownloader;
         this.blockRegistry = blockRegistry;
 
@@ -65,15 +75,12 @@ public class ChunkCompiler implements Runnable, Disposable {
     public void run() {
         try {
             while (!Thread.interrupted()) {
-                var section = sectionManager.sectionMeshQueue().take();
+                var section = sectionQueue.take();
                 unloadChunks();
 
                 var bakery = nextBakery();
 
-                Vector3i sectionBlockPos = section.pos().mul(16, new Vector3i());
-                Vector3i blockChunkOffset = new Vector3i();
-
-                long hash = 0;
+                final long[] hash = {0};
 
                 ILevel level = Minecraft.getLevel();
                 if (level == null) {
@@ -81,38 +88,24 @@ public class ChunkCompiler implements Runnable, Disposable {
                     continue;
                 }
 
-                for (int px = 0; px < 16; px++) {
-                    for (int py = 0; py < 16; py++) {
-                        for (int pz = 0; pz < 16; pz++) {
-                            var blockPos = IBlockPos.of(
-                                    sectionBlockPos.x + px,
-                                    sectionBlockPos.y + py,
-                                    sectionBlockPos.z + pz
-                            );
+                section.forEachBlock((blockChunkOffset, blockPos, block) -> {
+                    hash[0] = hash[0] * 31 + block.hashCode();
 
-                            var block = section.getBlockState(px, py, pz);
-                            hash = hash * 31 + block.hashCode();
+                    if (block.isAir()) return;
+                    bakery.submitBlock(
+                            blockChunkOffset,
+                            blockPos,
+                            block,
+                            level
+                    );
+                });
 
-                            if (block.isAir()) continue;
-
-                            blockChunkOffset.set(px, py, pz);
-
-                            bakery.submitBlock(
-                                    blockChunkOffset,
-                                    blockPos,
-                                    block,
-                                    level
-                            );
-                        }
-                    }
-                }
-
-                if (Objects.equals(sectionHashes.put(section.pos(), hash), hash)) {
+                if (Objects.equals(sectionHashes.put(section.pos(), hash[0]), hash[0])) {
                     releaseBakery(bakery);
                     continue;
                 }
 
-                sectionManager.builtSections().offer(section.pos(), new BuildResult(section.pos(), sectionBlockPos, bakery));
+                builtSectionQueue.offer(section.pos(), new BuildResult(section.pos(), section.blockPos(), bakery));
             }
         } catch (InterruptedException | IgnoredInterruptedException e) {
 
@@ -122,7 +115,6 @@ public class ChunkCompiler implements Runnable, Disposable {
     }
 
     private void unloadChunks() {
-        var unloadQueue = sectionManager.chunkUnloadedSections();
         while (!unloadQueue.isEmpty()) {
             var section = unloadQueue.poll();
             if (section == null) continue;
