@@ -1,0 +1,46 @@
+package at.redi2go.photonics.common.mixins.iris.pipeline.passes.composite;
+
+import at.redi2go.photonics.common.iris.IrisUtil;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import net.irisshaders.iris.gl.program.ComputeProgram;
+import net.irisshaders.iris.gl.program.Program;
+import net.irisshaders.iris.pipeline.CompositeRenderer;
+import net.irisshaders.iris.pipeline.WorldRenderingPipeline;
+import org.spongepowered.asm.mixin.Final;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.injection.At;
+
+@Mixin(CompositeRenderer.class)
+public abstract class CompositeRendererMixin {
+    @Shadow
+    @Final
+    private WorldRenderingPipeline pipeline;
+
+    @WrapOperation(
+            method = "renderAll",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/irisshaders/iris/gl/program/ComputeProgram;use()V"
+            )
+    )
+    private void useCompute(ComputeProgram instance, Operation<Void> original) {
+        IrisUtil.bindBuffers(pipeline, instance.getProgramId());
+        original.call(instance);
+    }
+
+    @WrapOperation(
+            method = "renderAll",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/irisshaders/iris/gl/program/Program;use()V"
+            )
+    )
+    private void use(Program instance, Operation<Void> original) {
+        IrisUtil.bindBuffers(pipeline, instance.getProgramId());
+        original.call(instance);
+    }
+
+    // 1.8.8: skipped — RenderPass.drawIndexed and iris$getCustomPass do not exist in Iris 1.8.8 / MC 1.21.1 blaze3d
+}

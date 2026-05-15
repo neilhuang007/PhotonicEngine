@@ -7,7 +7,6 @@ import at.redi2go.photonics.core.iris.pipeline.buffer.IBufferHolder;
 import at.redi2go.photonics.core.iris.pipeline.uniform.IDynamicUniformHolder;
 import at.redi2go.photonics.core.rendering.RenderingComponent;
 import at.redi2go.photonics.core.rendering.SectionManager;
-import at.redi2go.photonics.core.rendering.ThreadRunnable;
 import at.redi2go.photonics.core.rendering.UniformUpdater;
 import at.redi2go.photonics.core.rendering.world.BlockRegistry;
 import at.redi2go.photonics.core.rendering.world.IgnoredInterruptedException;

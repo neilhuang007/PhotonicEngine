@@ -1,0 +1,151 @@
+package at.redi2go.photonics.common.meshing;
+
+import at.redi2go.photonics.api.mc.Id;
+import at.redi2go.photonics.api.mc.core.IBlockPos;
+import at.redi2go.photonics.api.mc.world.level.IBlockAndTintGetter;
+import at.redi2go.photonics.api.mc.world.level.IBlockState;
+import at.redi2go.photonics.common.BlockRenderDispatcherExt;
+import at.redi2go.photonics.common.iris.IrisUtil;
+import at.redi2go.photonics.core.rendering.world.bakery.BlockBuilder;
+import at.redi2go.photonics.core.rendering.world.bakery.BlockLod;
+import at.redi2go.photonics.core.rendering.world.bakery.BlockMesher;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.block.BlockRenderDispatcher;
+import net.minecraft.client.renderer.texture.OverlayTexture;
+import net.minecraft.client.renderer.texture.TextureAtlas;
+import net.minecraft.core.BlockPos;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.BlockAndTintGetter;
+import net.minecraft.world.level.block.RenderShape;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.Fluid;
+import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.material.Fluids;
+import org.joml.Vector3i;
+
+import java.util.Set;
+
+public class MinecraftBlockMesher implements BlockMesher {
+    private static final ThreadLocal<Renderer> RENDERERS = ThreadLocal.withInitial(Renderer::new);
+
+    private @BlockLod int getLod(BlockState blockState) {
+        if (blockState.is(BlockTags.LEAVES))
+            return BlockLod.NO_SEED | BlockLod.CONTAINED;
+
+        return 0;
+    }
+
+    @Override
+    public void meshBlock(
+            Vector3i blockChunkOffset,
+            IBlockPos pos,
+            IBlockState blockState,
+            IBlockAndTintGetter blockAndTintGetter,
+            BlockBuilder blockBuilder
+    ) {
+        meshBlock(
+                blockChunkOffset,
+                (BlockPos) pos,
+                (BlockState) blockState,
+                (BlockAndTintGetter) blockAndTintGetter,
+                blockBuilder
+        );
+    }
+
+    private void meshBlock(
+            Vector3i blockChunkOffset,
+            BlockPos pos,
+            BlockState blockState,
+            BlockAndTintGetter blockAndTintGetter,
+            BlockBuilder builder
+    ) {
+        var renderer = RENDERERS.get();
+        int lod = getLod(blockState);
+        builder.beginBlock(IrisUtil.getBlockId(blockState), lod, blockChunkOffset);
+
+        FluidState fluidState = blockState.getFluidState();
+        if (!fluidState.isEmpty()) renderer.submitFluid(
+                pos,
+                blockAndTintGetter,
+                builder,
+                blockState,
+                fluidState
+        );
+
+        if (blockState.getRenderShape() == RenderShape.MODEL) {
+            renderer.submitBlock(
+                    lod,
+                    pos,
+                    blockState,
+                    blockAndTintGetter,
+                    builder
+            );
+        }
+    }
+
+    private static class Renderer {
+        private final RandomSource randomSource = RandomSource.create();
+        private final BlockRenderDispatcher blockRenderer = Minecraft.getInstance().getBlockRenderer();
+        private final PoseStack poseStack = new PoseStack();
+
+        private static final Id BLOCK_ATLAS = (Id) (Object) TextureAtlas.LOCATION_BLOCKS;
+
+        private static final Set<Fluid> WHITELISTED_FLUIDS = Set.of(Fluids.LAVA, Fluids.FLOWING_LAVA);
+
+        private void submitFluid(
+                BlockPos blockPos,
+                BlockAndTintGetter blockAndTintGetter,
+                BlockBuilder builder,
+                BlockState blockState,
+                FluidState fluidState
+        ) {
+            if (!WHITELISTED_FLUIDS.contains(fluidState.getType())) return;
+
+            builder.useAtlas(BLOCK_ATLAS);
+            builder.useOffset(
+                    -(blockPos.getX() & 15),
+                    -(blockPos.getY() & 15),
+                    -(blockPos.getZ() & 15)
+            );
+
+            blockRenderer.renderLiquid(blockPos, blockAndTintGetter, (VertexConsumer) builder, blockState, fluidState);
+        }
+
+        private void submitBlock(
+                int lod,
+                BlockPos pos,
+                BlockState blockState,
+                BlockAndTintGetter blockAndTintGetter,
+                BlockBuilder builder
+        ) {
+            builder.useAtlas(BLOCK_ATLAS);
+            builder.useOffset(0f, 0f, 0f);
+
+            poseStack.pushPose();
+            var offset = blockState.getOffset(blockAndTintGetter, pos);
+            poseStack.translate(offset.x, offset.y, offset.z);
+
+            long seed = blockState.getSeed(pos);
+            randomSource.setSeed((lod & BlockLod.NO_SEED) == 0 ? seed : 0);
+            ((BlockRenderDispatcherExt) blockRenderer)
+                    .photonics$modelBlockRenderer()
+                    .tesselateWithoutAO(
+                            blockAndTintGetter,
+                            blockRenderer.getBlockModel(blockState),
+                            blockState,
+                            pos,
+                            poseStack,
+                            (VertexConsumer) builder,
+                            false,
+                            randomSource,
+                            seed,
+                            OverlayTexture.NO_OVERLAY
+                    );
+
+            poseStack.popPose();
+        }
+    }
+}

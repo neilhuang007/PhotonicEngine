@@ -1,0 +1,8 @@
+{
+  "multi_threading_enabled": true,
+  "defines": {},
+  "lights": {},
+  "raytraced_lights": {},
+  "enable_voxelized_blocks": true,
+  "voxelized_blocks": []
+}
