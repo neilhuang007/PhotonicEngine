@@ -34,8 +34,13 @@ public class Ph_GlTexture2D extends Ph_AbstractGlTexture<Vector2ic> implements I
             );
         }
         int internalFormat = ((InternalTextureFormat) (Object) textureFormat).getGlFormat();
-        GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, handle);
-        GL42C.glTexStorage2D(GL11C.GL_TEXTURE_2D, mipLevels, internalFormat, size.x(), size.y());
+        int previousTexture = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
+        try {
+            GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, handle);
+            GL42C.glTexStorage2D(GL11C.GL_TEXTURE_2D, mipLevels, internalFormat, size.x(), size.y());
+        } finally {
+            GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, previousTexture);
+        }
     }
 
     @Override

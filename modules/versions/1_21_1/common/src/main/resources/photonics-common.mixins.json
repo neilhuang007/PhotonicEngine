@@ -29,6 +29,9 @@
     "iris.pipeline.uniforms.UniformHolderMixin",
     "iris.pipeline.uniforms.UniformUpdateFrequencyMixin",
     "rendering.world.bakery.VertexBuilderMixin",
+    "meshing.CompositeRenderTypeAccessor",
+    "meshing.CompositeStateAccessor",
+    "meshing.EmptyTextureStateShardAccessor",
     "meshing.OuterWrappedRenderTypeAccessor"
   ],
   "mixins": [

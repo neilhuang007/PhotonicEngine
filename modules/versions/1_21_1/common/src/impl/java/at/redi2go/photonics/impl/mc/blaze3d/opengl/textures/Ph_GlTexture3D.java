@@ -35,8 +35,13 @@ public class Ph_GlTexture3D extends Ph_AbstractGlTexture<Vector3ic> implements I
             );
         }
         int internalFormat = ((InternalTextureFormat) (Object) textureFormat).getGlFormat();
-        GL11C.glBindTexture(GL12C.GL_TEXTURE_3D, handle);
-        GL42C.glTexStorage3D(GL12C.GL_TEXTURE_3D, mipLevels, internalFormat, size.x(), size.y(), size.z());
+        int previousTexture = GL11C.glGetInteger(GL12C.GL_TEXTURE_BINDING_3D);
+        try {
+            GL11C.glBindTexture(GL12C.GL_TEXTURE_3D, handle);
+            GL42C.glTexStorage3D(GL12C.GL_TEXTURE_3D, mipLevels, internalFormat, size.x(), size.y(), size.z());
+        } finally {
+            GL11C.glBindTexture(GL12C.GL_TEXTURE_3D, previousTexture);
+        }
     }
 
     @Override

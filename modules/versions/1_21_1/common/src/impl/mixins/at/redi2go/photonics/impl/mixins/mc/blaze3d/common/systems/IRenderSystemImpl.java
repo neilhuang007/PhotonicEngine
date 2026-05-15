@@ -10,6 +10,6 @@ import org.spongepowered.asm.mixin.Overwrite;
 public interface IRenderSystemImpl {
     @Overwrite
     static IGpuDevice getDevice() {
-        return Ph_GlGpuDevice.INSTANCE;
+        return Ph_GlGpuDevice.getOrInit();
     }
 }

@@ -18,6 +18,7 @@ import at.redi2go.photonics.impl.mc.blaze3d.opengl.buffer.Ph_GlGpuBuffer;
 import at.redi2go.photonics.impl.mc.blaze3d.opengl.textures.Ph_GlGpuSampler;
 import at.redi2go.photonics.impl.mc.blaze3d.opengl.textures.Ph_GlTexture2D;
 import at.redi2go.photonics.impl.mc.blaze3d.opengl.textures.Ph_GlTexture3D;
+import com.mojang.blaze3d.systems.RenderSystem;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Vector2i;
 import org.joml.Vector3i;
@@ -36,7 +37,7 @@ public final class Ph_GlGpuDevice implements IGpuDevice {
     // INSTANCE is intentionally NOT initialized here — it is created inside init() so that
     // GlDsaCompat.<clinit> (which calls GL.getCapabilities()) is always triggered on the
     // render thread, never from a worker thread that has no current GL context.
-    public static Ph_GlGpuDevice INSTANCE;
+    public static volatile Ph_GlGpuDevice INSTANCE;
 
     private static volatile boolean initialized = false;
 
@@ -49,11 +50,28 @@ public final class Ph_GlGpuDevice implements IGpuDevice {
      */
     public static void init() {
         if (initialized) return;
-        // Touch GlDsaCompat to force its static initializer now, on the render thread.
-        GlDsaCompat.ensureInitialized();
-        INSTANCE = new Ph_GlGpuDevice();
-        initialized = true;
-        LOGGER.info("Ph_GlGpuDevice initialized on render thread");
+        synchronized (Ph_GlGpuDevice.class) {
+            if (initialized) return;
+
+            // Touch GlDsaCompat to force its static initializer now, on the render thread.
+            GlDsaCompat.ensureInitialized();
+            INSTANCE = new Ph_GlGpuDevice();
+            initialized = true;
+            LOGGER.info("Ph_GlGpuDevice initialized on render thread");
+        }
+    }
+
+    public static Ph_GlGpuDevice getOrInit() {
+        if (!initialized) {
+            if (!RenderSystem.isOnRenderThreadOrInit()) {
+                throw new IllegalStateException(
+                        "Photonics GPU device was requested before render-thread initialization");
+            }
+
+            init();
+        }
+
+        return INSTANCE;
     }
 
     private final ICommandEncoder commandEncoder = new Ph_GlCommandEncoder();

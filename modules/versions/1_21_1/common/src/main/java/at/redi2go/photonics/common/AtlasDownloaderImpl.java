@@ -6,26 +6,20 @@ import at.redi2go.photonics.core.rendering.world.bakery.texture.CpuTexture;
 import at.redi2go.photonics.core.rendering.world.bakery.texture.Rgba8Texture;
 import com.mojang.blaze3d.platform.NativeImage;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.texture.AbstractTexture;
-import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.client.renderer.texture.TextureManager;
 import net.minecraft.resources.ResourceLocation;
 import org.lwjgl.opengl.GL11;
 
-import java.util.HashMap;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 
 public class AtlasDownloaderImpl implements AtlasDownloader, Runnable {
-    private final Map<Class<? extends AbstractTexture>, CpuTexture.Factory> textureFormats = new HashMap<>();
     private final ConcurrentHashMap<Id, CompletableFuture<CpuTexture>> cache = new ConcurrentHashMap<>();
 
     private final TextureManager textureManager = Minecraft.getInstance().getTextureManager();
 
     public AtlasDownloaderImpl() {
-        textureFormats.put(TextureAtlas.class, Rgba8Texture::new);
         ResourceReloaderListener.add(this);
     }
 
@@ -42,29 +36,26 @@ public class AtlasDownloaderImpl implements AtlasDownloader, Runnable {
                 try {
                     var texture = textureManager.getTexture((ResourceLocation) (Object) atlasId);
 
-                    CpuTexture.Factory textureFormat = textureFormats.get(texture.getClass());
-                    if (textureFormat == null)
-                        throw new IllegalArgumentException("Unsupported texture type: " + texture.getClass().getName());
-
-                    texture.bind();
-
-                    if (!(texture instanceof TextureAtlas)) {
-                        throw new IllegalArgumentException("Unsupported texture instance: " + texture.getClass().getName());
-                    }
-
-                    int width = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_WIDTH);
-                    int height = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_HEIGHT);
-
-                    if (width <= 0 || height <= 0) {
-                        throw new IllegalStateException("Bound texture has invalid size " + width + "x" + height + " for " + atlasId);
-                    }
-
-                    NativeImage image = new NativeImage(width, height, false);
+                    int previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
                     try {
-                        image.downloadTexture(0, false);
-                        future.complete(textureFormat.create(width, height, image.getPixelsRGBA()));
+                        texture.bind();
+
+                        int width = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_WIDTH);
+                        int height = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_HEIGHT);
+
+                        if (width <= 0 || height <= 0) {
+                            throw new IllegalStateException("Bound texture has invalid size " + width + "x" + height + " for " + atlasId);
+                        }
+
+                        NativeImage image = new NativeImage(width, height, false);
+                        try {
+                            image.downloadTexture(0, false);
+                            future.complete(new Rgba8Texture(width, height, image.getPixelsRGBA()));
+                        } finally {
+                            image.close();
+                        }
                     } finally {
-                        image.close();
+                        GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture);
                     }
                 } catch (Throwable e) {
                     future.completeExceptionally(e);

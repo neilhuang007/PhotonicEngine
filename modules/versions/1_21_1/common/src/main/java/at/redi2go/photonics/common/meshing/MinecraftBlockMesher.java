@@ -12,14 +12,21 @@ import at.redi2go.photonics.core.rendering.world.bakery.BlockMesher;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.block.BlockRenderDispatcher;
+import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.core.BlockPos;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.BlockAndTintGetter;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.RenderShape;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.material.FluidState;
@@ -75,6 +82,14 @@ public class MinecraftBlockMesher implements BlockMesher {
                 fluidState
         );
 
+        if (blockState.hasBlockEntity()) {
+            renderer.submitBlockState(
+                    blockState,
+                    blockAndTintGetter,
+                    builder
+            );
+        }
+
         if (blockState.getRenderShape() == RenderShape.MODEL) {
             renderer.submitBlock(
                     lod,
@@ -90,6 +105,7 @@ public class MinecraftBlockMesher implements BlockMesher {
         private final RandomSource randomSource = RandomSource.create();
         private final BlockRenderDispatcher blockRenderer = Minecraft.getInstance().getBlockRenderer();
         private final PoseStack poseStack = new PoseStack();
+        private final BlockBuilderBufferSource bufferSource = new BlockBuilderBufferSource();
 
         private static final Id BLOCK_ATLAS = (Id) (Object) TextureAtlas.LOCATION_BLOCKS;
 
@@ -146,6 +162,53 @@ public class MinecraftBlockMesher implements BlockMesher {
                     );
 
             poseStack.popPose();
+        }
+
+        private static final Set<Block> LEVEL_REQUIRED_FOR = new BlockSetBuilder()
+                .addBlock(Blocks.CHEST)
+                .build();
+
+        @SuppressWarnings("unchecked")
+        private void submitBlockState(
+                BlockState blockState,
+                BlockAndTintGetter blockAndTintGetter,
+                BlockBuilder builder
+        ) {
+            builder.useOffset(0f, 0f, 0f);
+            bufferSource.setBlockBuilder(builder);
+
+            try {
+                if (!(blockState.getBlock() instanceof EntityBlock entityBlock)) return;
+
+                BlockEntity entity = entityBlock.newBlockEntity(BlockPos.ZERO, blockState);
+                if (entity == null) return;
+
+                if (LEVEL_REQUIRED_FOR.contains(blockState.getBlock()) && blockAndTintGetter instanceof Level level)
+                    entity.setLevel(level);
+
+                BlockEntityRenderer<BlockEntity> renderer =
+                        (BlockEntityRenderer<BlockEntity>) Minecraft.getInstance()
+                                .getBlockEntityRenderDispatcher()
+                                .getRenderer(entity);
+
+                if (renderer == null) return;
+
+                poseStack.pushPose();
+                try {
+                    renderer.render(
+                            entity,
+                            0f,
+                            poseStack,
+                            bufferSource,
+                            LightTexture.FULL_BRIGHT,
+                            OverlayTexture.NO_OVERLAY
+                    );
+                } finally {
+                    poseStack.popPose();
+                }
+            } finally {
+                bufferSource.setBlockBuilder(null);
+            }
         }
     }
 }

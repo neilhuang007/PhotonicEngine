@@ -14,6 +14,8 @@ import net.irisshaders.iris.gl.texture.InternalTextureFormat;
 import org.joml.Vector2ic;
 import org.joml.Vector3ic;
 import org.joml.Vector4fc;
+import org.lwjgl.BufferUtils;
+import org.lwjgl.opengl.ARBClearTexture;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL12C;
@@ -22,6 +24,7 @@ import org.lwjgl.opengl.GL44C;
 import org.lwjgl.opengl.GLCapabilities;
 
 import java.nio.ByteBuffer;
+import java.nio.FloatBuffer;
 
 // Standalone command encoder for the 1.21.1 port. The 1.21.11 module instead
 // installs an @Implements mixin onto Mojang's blaze3d GlCommandEncoder; that
@@ -35,13 +38,23 @@ public final class Ph_GlCommandEncoder implements ICommandEncoder {
         GLCapabilities caps = GL.getCapabilities();
 
         if (caps.OpenGL44 || caps.GL_ARB_clear_texture) {
-            clearColorTextureDsa(handle, format, clearColor);
+            clearColorTextureDsa(handle, format, clearColor, caps.OpenGL44);
         } else {
+            if (!(gpuTexture instanceof IGpuTexture2D)) {
+                throw new IllegalStateException(
+                        "Ph_GlCommandEncoder: clearColorTexture fallback only supports 2D textures");
+            }
+
             clearColorTextureFbo(handle, clearColor);
         }
     }
 
-    private static void clearColorTextureDsa(int handle, InternalTextureFormat format, Vector4fc clearColor) {
+    private static void clearColorTextureDsa(
+            int handle,
+            InternalTextureFormat format,
+            Vector4fc clearColor,
+            boolean useCoreEntryPoint
+    ) {
         var pixelFormat = format.getPixelFormat();
         if (pixelFormat.isInteger()) {
             int[] clear = {
@@ -50,7 +63,8 @@ public final class Ph_GlCommandEncoder implements ICommandEncoder {
                     Math.round(clearColor.z()),
                     Math.round(clearColor.w())
             };
-            GL44C.glClearTexImage(
+            clearTexImage(
+                    useCoreEntryPoint,
                     handle,
                     0,
                     pixelFormat.getGlFormat(),
@@ -59,13 +73,51 @@ public final class Ph_GlCommandEncoder implements ICommandEncoder {
             );
         } else {
             float[] clear = { clearColor.x(), clearColor.y(), clearColor.z(), clearColor.w() };
-            GL44C.glClearTexImage(handle, 0, pixelFormat.getGlFormat(), GL11C.GL_FLOAT, clear);
+            clearTexImage(useCoreEntryPoint, handle, 0, pixelFormat.getGlFormat(), GL11C.GL_FLOAT, clear);
+        }
+    }
+
+    private static void clearTexImage(
+            boolean useCoreEntryPoint,
+            int handle,
+            int level,
+            int format,
+            int type,
+            int[] clear
+    ) {
+        if (useCoreEntryPoint) {
+            GL44C.glClearTexImage(handle, level, format, type, clear);
+        } else {
+            ARBClearTexture.glClearTexImage(handle, level, format, type, clear);
+        }
+    }
+
+    private static void clearTexImage(
+            boolean useCoreEntryPoint,
+            int handle,
+            int level,
+            int format,
+            int type,
+            float[] clear
+    ) {
+        if (useCoreEntryPoint) {
+            GL44C.glClearTexImage(handle, level, format, type, clear);
+        } else {
+            ARBClearTexture.glClearTexImage(handle, level, format, type, clear);
         }
     }
 
     private static void clearColorTextureFbo(int handle, Vector4fc clearColor) {
         // Fallback for GL 3.3 contexts without ARB_clear_texture:
         // Attach the texture to a temporary FBO, clear it, then detach.
+        int previousDrawFramebuffer = GL11C.glGetInteger(GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
+        int previousReadFramebuffer = GL11C.glGetInteger(GL30C.GL_READ_FRAMEBUFFER_BINDING);
+        boolean scissorEnabled = GL11C.glIsEnabled(GL11C.GL_SCISSOR_TEST);
+        ByteBuffer colorMask = BufferUtils.createByteBuffer(4);
+        FloatBuffer previousClearColor = BufferUtils.createFloatBuffer(4);
+        GL11C.glGetBooleanv(GL11C.GL_COLOR_WRITEMASK, colorMask);
+        GL11C.glGetFloatv(GL11C.GL_COLOR_CLEAR_VALUE, previousClearColor);
+
         int fbo = GL30C.glGenFramebuffers();
         try {
             GL30C.glBindFramebuffer(GL30C.GL_FRAMEBUFFER, fbo);
@@ -94,7 +146,25 @@ public final class Ph_GlCommandEncoder implements ICommandEncoder {
                     0
             );
         } finally {
-            GL30C.glBindFramebuffer(GL30C.GL_FRAMEBUFFER, 0);
+            GL30C.glBindFramebuffer(GL30C.GL_READ_FRAMEBUFFER, previousReadFramebuffer);
+            GL30C.glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, previousDrawFramebuffer);
+            if (scissorEnabled) {
+                GL11C.glEnable(GL11C.GL_SCISSOR_TEST);
+            } else {
+                GL11C.glDisable(GL11C.GL_SCISSOR_TEST);
+            }
+            GL11C.glColorMask(
+                    colorMask.get(0) != 0,
+                    colorMask.get(1) != 0,
+                    colorMask.get(2) != 0,
+                    colorMask.get(3) != 0
+            );
+            GL11C.glClearColor(
+                    previousClearColor.get(0),
+                    previousClearColor.get(1),
+                    previousClearColor.get(2),
+                    previousClearColor.get(3)
+            );
             GL30C.glDeleteFramebuffers(fbo);
         }
     }
@@ -163,17 +233,21 @@ public final class Ph_GlCommandEncoder implements ICommandEncoder {
         var pixelFormat = format.getPixelFormat();
         int glPixelType = deriveGlPixelType(format);
 
-        GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, handle);
-        GL11C.glTexSubImage2D(
-                GL11C.GL_TEXTURE_2D,
-                0,
-                offset.x(), offset.y(),
-                size.x(), size.y(),
-                pixelFormat.getGlFormat(),
-                glPixelType,
-                data
-        );
-        GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, 0);
+        int previousTexture = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
+        try {
+            GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, handle);
+            GL11C.glTexSubImage2D(
+                    GL11C.GL_TEXTURE_2D,
+                    0,
+                    offset.x(), offset.y(),
+                    size.x(), size.y(),
+                    pixelFormat.getGlFormat(),
+                    glPixelType,
+                    data
+            );
+        } finally {
+            GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, previousTexture);
+        }
     }
 
     @Override
@@ -188,17 +262,21 @@ public final class Ph_GlCommandEncoder implements ICommandEncoder {
         var pixelFormat = format.getPixelFormat();
         int glPixelType = deriveGlPixelType(format);
 
-        GL11C.glBindTexture(GL12C.GL_TEXTURE_3D, handle);
-        GL12C.glTexSubImage3D(
-                GL12C.GL_TEXTURE_3D,
-                0,
-                offset.x(), offset.y(), offset.z(),
-                size.x(), size.y(), size.z(),
-                pixelFormat.getGlFormat(),
-                glPixelType,
-                data
-        );
-        GL11C.glBindTexture(GL12C.GL_TEXTURE_3D, 0);
+        int previousTexture = GL11C.glGetInteger(GL12C.GL_TEXTURE_BINDING_3D);
+        try {
+            GL11C.glBindTexture(GL12C.GL_TEXTURE_3D, handle);
+            GL12C.glTexSubImage3D(
+                    GL12C.GL_TEXTURE_3D,
+                    0,
+                    offset.x(), offset.y(), offset.z(),
+                    size.x(), size.y(), size.z(),
+                    pixelFormat.getGlFormat(),
+                    glPixelType,
+                    data
+            );
+        } finally {
+            GL11C.glBindTexture(GL12C.GL_TEXTURE_3D, previousTexture);
+        }
     }
 
     // Derive the GL pixel data type from the InternalTextureFormat name.
