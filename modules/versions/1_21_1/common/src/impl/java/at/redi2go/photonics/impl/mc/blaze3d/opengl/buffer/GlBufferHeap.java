@@ -11,7 +11,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.util.Objects;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.Supplier;
@@ -82,7 +81,17 @@ public class GlBufferHeap extends AbstractGpuBufferHeap {
             int length = (int) region.end() - offset;
 
             var slice = GlDsaCompat.mapNamedBufferRange(handle, offset, length, GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT);
-            Objects.requireNonNull(slice, "failed to map buffer range");
+            // glMapNamedBufferRange can return null on legacy GL3.x drivers where GlDsaCompat
+            // falls back to glBufferData (immutable-storage semantics are unavailable).
+            // NPE from requireNonNull would hide the root cause; throw a diagnostic ISE instead.
+            if (slice == null) {
+                throw new IllegalStateException(
+                        "glMapNamedBufferRange returned null for buffer handle=" + handle
+                                + " offset=" + offset
+                                + " length=" + length
+                                + " flags=0x" + Integer.toHexString(GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT)
+                                + " — driver may not support persistent/immutable buffer mapping on this GL version");
+            }
 
             try {
                 slice.put(0, buffer, offset, length);

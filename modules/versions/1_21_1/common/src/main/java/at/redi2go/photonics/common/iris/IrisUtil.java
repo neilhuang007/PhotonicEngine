@@ -64,8 +64,7 @@ public class IrisUtil {
         return ((IGlTexture) texture).handle();
     }
 
-    public static GlSampler getGlSampler(IGpuSampler sampler) {
-        int id = ((Ph_GlGpuSampler) sampler).handle();
-        return new Ph_IrisGlSampler(id);
+    public static Ph_IrisGlSampler getGlSampler(IGpuSampler sampler) {
+        return new Ph_IrisGlSampler(() -> ((Ph_GlGpuSampler) sampler).handle());
     }
 }

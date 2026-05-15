@@ -10,6 +10,8 @@ import com.llamalad7.mixinextras.sugar.Local;
 import com.llamalad7.mixinextras.sugar.ref.LocalRef;
 import net.irisshaders.iris.shaderpack.include.AbsolutePackPath;
 import net.irisshaders.iris.shaderpack.include.IncludeGraph;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
@@ -24,6 +26,8 @@ import java.util.List;
 
 @Mixin(IncludeGraph.class)
 public abstract class IncludeGraphMixin {
+    @Unique private static final Logger LOGGER = LogManager.getLogger("Photonics/IncludeGraphMixin");
+
     @Unique private Path root;
     @Unique private ShaderPatcher patcher;
 
@@ -44,7 +48,12 @@ public abstract class IncludeGraphMixin {
             @Local(argsOnly = true) LocalRef<ImmutableList<AbsolutePackPath>> startingPathsRef
     ) {
         this.root = root;
-        this.patcher = PatcherBridge.consumePatcher();
+        this.patcher = PatcherBridge.consume();
+
+        if (this.patcher == null) {
+            LOGGER.warn("PatcherBridge returned null for this IncludeGraph construction — no Photonics patcher available; skipping patcher-dependent include injection");
+            return;
+        }
 
         var newFiles = patcher.getCreatedFiles();
 
@@ -64,6 +73,10 @@ public abstract class IncludeGraphMixin {
             )
     )
     private String readFile(Path path, Operation<String> original) throws IOException {
+        if (patcher == null) {
+            return original.call(path);
+        }
+
         var packPath = IPackPath.fromAbsolutePath("/" + root.relativize(path));
         var result = patcher.readShaderFile(
                 packPath,

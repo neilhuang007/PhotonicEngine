@@ -96,5 +96,6 @@ public class SingleFramebuffer extends GlFramebuffer implements InternalIrisFram
     public void close() {
         for (var attachment : attachments)
             attachment.close();
+        destroy();
     }
 }

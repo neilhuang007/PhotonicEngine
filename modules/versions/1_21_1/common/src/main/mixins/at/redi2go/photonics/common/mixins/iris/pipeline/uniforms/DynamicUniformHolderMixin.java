@@ -3,6 +3,7 @@ package at.redi2go.photonics.common.mixins.iris.pipeline.uniforms;
 import at.redi2go.photonics.core.iris.pipeline.uniform.IDynamicUniformHolder;
 import at.redi2go.photonics.core.iris.pipeline.uniform.IUniformHolder;
 import at.redi2go.photonics.core.iris.pipeline.uniform.IValueUpdateNotifier;
+import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.gl.state.ValueUpdateNotifier;
 import net.irisshaders.iris.gl.uniform.DynamicUniformHolder;
 import org.joml.Matrix3fc;
@@ -72,6 +73,10 @@ public interface DynamicUniformHolderMixin extends DynamicUniformHolder, IDynami
 
     @Override
     default IUniformHolder uniformMatrix3(String var1, Supplier<Matrix3fc> var2, IValueUpdateNotifier var3) {
-        throw new UnsupportedOperationException("uniformMatrix3 is not present in Iris 1.8.8");
+        Iris.logger.warn(
+                "[Photonics] uniformMatrix3 unsupported on Iris 1.8.8 path (DynamicUniformHolder has no uniformMatrix3 in this version); uniform '{}' silently skipped",
+                var1
+        );
+        return this;
     }
 }

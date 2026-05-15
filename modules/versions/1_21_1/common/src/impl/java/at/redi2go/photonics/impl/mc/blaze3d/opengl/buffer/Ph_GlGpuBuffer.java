@@ -31,10 +31,30 @@ public class Ph_GlGpuBuffer implements IGpuBuffer {
 
         this.handle = GlDsaCompat.createBuffer();
 
+        // Mask out all internal-only BufferUsage bits before composing GL storage flags.
+        // GlBufferHeap.NO_PERSISTENCE_MAPPING (1 << 20) is an ABI-parity sentinel that must
+        // never reach GL. Any future internal bits added above UNIFORM_TEXEL_BUFFER (1<<8)
+        // should also be excluded here.
+        //
+        // BufferUsage flags UNIFORM, VERTEX, INDEX, COPY_DST, COPY_SRC, and
+        // UNIFORM_TEXEL_BUFFER are driver-hint / binding-type annotations that carry no
+        // corresponding GL storage-flag requirement; they are intentionally ignored here.
+        // GL_DYNAMIC_STORAGE_BIT is always set so callers can always upload data.
+        final int glUsageMask = BufferUsage.MAP_READ
+                | BufferUsage.MAP_WRITE
+                | BufferUsage.HINT_CLIENT_STORAGE
+                | BufferUsage.COPY_DST
+                | BufferUsage.COPY_SRC
+                | BufferUsage.VERTEX
+                | BufferUsage.INDEX
+                | BufferUsage.UNIFORM
+                | BufferUsage.UNIFORM_TEXEL_BUFFER;
+        final int glUsage = usage & glUsageMask;
+
         int storageFlags = GL_DYNAMIC_STORAGE_BIT;
-        if ((usage & BufferUsage.MAP_READ) != 0) storageFlags |= GL_MAP_READ_BIT;
-        if ((usage & BufferUsage.MAP_WRITE) != 0) storageFlags |= GL_MAP_WRITE_BIT;
-        if ((usage & BufferUsage.HINT_CLIENT_STORAGE) != 0) storageFlags |= GL_CLIENT_STORAGE_BIT;
+        if ((glUsage & BufferUsage.MAP_READ) != 0) storageFlags |= GL_MAP_READ_BIT;
+        if ((glUsage & BufferUsage.MAP_WRITE) != 0) storageFlags |= GL_MAP_WRITE_BIT;
+        if ((glUsage & BufferUsage.HINT_CLIENT_STORAGE) != 0) storageFlags |= GL_CLIENT_STORAGE_BIT;
 
         GlDsaCompat.namedBufferStorage(handle, byteSize, storageFlags);
 

@@ -42,6 +42,15 @@ public final class GlDsaCompat {
 
     private GlDsaCompat() {}
 
+    /**
+     * No-op method whose sole purpose is to give callers a named way to force this class's
+     * static initializer to run on the correct thread (the render thread, with a GL context
+     * current) before any buffer operations can reach it from a worker thread.
+     */
+    public static void ensureInitialized() {
+        // Intentionally empty: touching this class is enough to trigger <clinit>.
+    }
+
     // GL_COPY_WRITE_BUFFER is deliberately used for single-buffer ops to avoid disturbing
     // the texture/VBO/IBO bind points that Iris and Minecraft use during the same frame.
     private static void bindWrite(int buffer) {

@@ -38,42 +38,38 @@ public class AtlasDownloaderImpl implements AtlasDownloader, Runnable {
         return cache.computeIfAbsent(atlasId, (id) -> {
             var future = new CompletableFuture<CpuTexture>();
 
-            try {
-                var texture = textureManager.getTexture((ResourceLocation) (Object) atlasId);
+            Minecraft.getInstance().execute(() -> {
+                try {
+                    var texture = textureManager.getTexture((ResourceLocation) (Object) atlasId);
 
-                CpuTexture.Factory textureFormat = textureFormats.get(texture.getClass());
-                if (textureFormat == null)
-                    throw new IllegalArgumentException("Unsupported texture type: " + texture.getClass().getName());
+                    CpuTexture.Factory textureFormat = textureFormats.get(texture.getClass());
+                    if (textureFormat == null)
+                        throw new IllegalArgumentException("Unsupported texture type: " + texture.getClass().getName());
 
-                Minecraft.getInstance().execute(() -> {
-                    try {
-                        texture.bind();
+                    texture.bind();
 
-                        if (!(texture instanceof TextureAtlas)) {
-                            throw new IllegalArgumentException("Unsupported texture instance: " + texture.getClass().getName());
-                        }
-
-                        int width = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_WIDTH);
-                        int height = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_HEIGHT);
-
-                        if (width <= 0 || height <= 0) {
-                            throw new IllegalStateException("Bound texture has invalid size " + width + "x" + height + " for " + atlasId);
-                        }
-
-                        NativeImage image = new NativeImage(width, height, false);
-                        try {
-                            image.downloadTexture(0, false);
-                            future.complete(textureFormat.create(width, height, image.getPixelsRGBA()));
-                        } finally {
-                            image.close();
-                        }
-                    } catch (Throwable e) {
-                        future.completeExceptionally(e);
+                    if (!(texture instanceof TextureAtlas)) {
+                        throw new IllegalArgumentException("Unsupported texture instance: " + texture.getClass().getName());
                     }
-                });
-            } catch (Throwable e) {
-                future.completeExceptionally(e);
-            }
+
+                    int width = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_WIDTH);
+                    int height = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_HEIGHT);
+
+                    if (width <= 0 || height <= 0) {
+                        throw new IllegalStateException("Bound texture has invalid size " + width + "x" + height + " for " + atlasId);
+                    }
+
+                    NativeImage image = new NativeImage(width, height, false);
+                    try {
+                        image.downloadTexture(0, false);
+                        future.complete(textureFormat.create(width, height, image.getPixelsRGBA()));
+                    } finally {
+                        image.close();
+                    }
+                } catch (Throwable e) {
+                    future.completeExceptionally(e);
+                }
+            });
 
             return future;
         });

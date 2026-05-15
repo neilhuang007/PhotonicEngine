@@ -20,7 +20,7 @@ public interface FramebufferSize {
 
         public Relative {
             if (width < 0f || width > 1f) throw new IllegalArgumentException("width was " + width + "; expected 0..1");
-            if (height < 0f || height > 1f) throw new IllegalArgumentException("height was " + width + "; expected 0..1");
+            if (height < 0f || height > 1f) throw new IllegalArgumentException("height was " + height + "; expected 0..1");
         }
 
         @Override

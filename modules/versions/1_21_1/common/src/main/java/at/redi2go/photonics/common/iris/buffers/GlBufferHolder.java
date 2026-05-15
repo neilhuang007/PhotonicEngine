@@ -13,12 +13,22 @@ import it.unimi.dsi.fastutil.ints.IntSet;
 import org.lwjgl.opengl.GL30;
 import org.lwjgl.opengl.GL31;
 import org.lwjgl.opengl.GL43;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.Collections;
 import java.util.function.Supplier;
 
 public class GlBufferHolder implements IBufferHolder {
+    private static final Logger LOGGER = LoggerFactory.getLogger(GlBufferHolder.class);
+
+    /** Tracks class names already warned about to avoid log spam per-frame. */
+    private static final Set<String> warnedBufferClasses = Collections.newSetFromMap(
+            new java.util.concurrent.ConcurrentHashMap<>());
+
     private final List<Pair<String, Supplier<IGpuBuffer>>> buffers = new ArrayList<>();
     private final Int2ObjectMap<int[]> foundBlockIndices = new Int2ObjectOpenHashMap<>();
 
@@ -72,8 +82,21 @@ public class GlBufferHolder implements IBufferHolder {
     }
 
     private static void bindBuffer(int program, IGpuBuffer buffer, int blockIndex, int bindingPointIndex) {
-        // 1.21.1 has no GlBufferAccessor mixin; use Ph_GlGpuBuffer.handle() directly instead
-        int handle = ((Ph_GlGpuBuffer) buffer).handle();
+        // 1.21.1 has no GlBufferAccessor mixin; use Ph_GlGpuBuffer.handle() directly instead.
+        // Guard against non-Ph_GlGpuBuffer instances supplied via addDefaultBuffer(name, supplier)
+        // (e.g. Mojang-wrapped or Iris-provided IGpuBuffer implementations): rather than
+        // ClassCastException on the render thread, log a one-shot WARN and skip the bind.
+        if (!(buffer instanceof Ph_GlGpuBuffer phBuffer)) {
+            String className = buffer.getClass().getName();
+            if (warnedBufferClasses.add(className)) {
+                LOGGER.warn("GlBufferHolder: cannot bind buffer of type {} — expected Ph_GlGpuBuffer."
+                        + " This buffer will be skipped. Check the IGpuBuffer supplier registered"
+                        + " via addDefaultBuffer().", className);
+            }
+            return;
+        }
+
+        int handle = phBuffer.handle();
 
         if ((buffer.usage() & BufferUsage.UNIFORM) == 0) {
             GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, bindingPointIndex, handle);

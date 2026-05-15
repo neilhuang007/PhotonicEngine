@@ -2,11 +2,14 @@ package at.redi2go.photonics.common.mixins.iris;
 
 import at.redi2go.photonics.api.shaders.AlphaMode;
 import at.redi2go.photonics.api.shaders.LightingMode;
+import at.redi2go.photonics.common.PhotonicsPropertiesImpl;
 import at.redi2go.photonics.common.iris.ShaderPropertiesBridge;
 import com.llamalad7.mixinextras.sugar.Local;
 import it.unimi.dsi.fastutil.booleans.BooleanConsumer;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.shaderpack.properties.ShaderProperties;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
@@ -37,6 +40,35 @@ import static at.redi2go.photonics.api.shaders.PhotonicsProperties.SEPARATE_HAND
 
 @Mixin(ShaderProperties.class)
 public abstract class ShaderPropertiesMixin {
+    @Unique private static final Logger LOGGER = LogManager.getLogger("Photonics/ShaderPropertiesMixin");
+
+    /**
+     * Consumed lazily from {@link ShaderPropertiesBridge} on the first {@code lambda$new$58}
+     * invocation (or at constructor TAIL if no keys exist).  {@code null} means no Photonics
+     * properties object was set on this thread (degraded mode — Photonics-specific keys are
+     * silently ignored).
+     */
+    @Unique private PhotonicsPropertiesImpl phProperties;
+    @Unique private boolean phPropertiesInitialized;
+
+    @Unique
+    private void photonics$ensurePropertiesConsumed() {
+        if (phPropertiesInitialized) return;
+        phPropertiesInitialized = true;
+        phProperties = ShaderPropertiesBridge.consume();
+        if (phProperties == null) {
+            LOGGER.warn("ShaderPropertiesBridge returned null — no Photonics properties available for this ShaderProperties instance; Photonics-specific shader keys will be ignored");
+        }
+    }
+
+    @Inject(
+            method = "<init>(Ljava/lang/String;Lnet/irisshaders/iris/shaderpack/option/ShaderPackOptions;Ljava/lang/Iterable;)V",
+            at = @At("RETURN")
+    )
+    private void finalizePhotonicsProperties(CallbackInfo ci) {
+        photonics$ensurePropertiesConsumed();
+    }
+
     // 1.8.8: lambda$new$58 is the key-value parsing loop (Map.forEach BiConsumer);
     //        1.10.5 renamed/renumbered it to lambda$new$54.
     //        In 1.8.8 the checkcast'd key/value locals have no LVT names, so capture by ordinal.
@@ -52,7 +84,10 @@ public abstract class ShaderPropertiesMixin {
             @Local(ordinal = 0) String key,
             @Local(ordinal = 1) String value
     ) {
-        var phProperties = ShaderPropertiesBridge.getProperties();
+        photonics$ensurePropertiesConsumed();
+        if (phProperties == null) {
+            return;
+        }
 
         handleBooleanDirective(key, value, ENABLED_KEY, e -> phProperties.enabled = e);
         handleFloatDirective(key, value, RENDER_SCALE_KEY, e -> phProperties.renderScale = e);

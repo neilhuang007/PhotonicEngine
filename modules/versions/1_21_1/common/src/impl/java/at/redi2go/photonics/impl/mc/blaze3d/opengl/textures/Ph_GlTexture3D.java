@@ -26,6 +26,14 @@ public class Ph_GlTexture3D extends Ph_AbstractGlTexture<Vector3ic> implements I
 
     @Override
     protected void initTexture(int handle) {
+        if (!(((Object) textureFormat) instanceof InternalTextureFormat)) {
+            throw new IllegalStateException(
+                    "textureFormat is " + textureFormat.getClass().getName() +
+                    " and cannot be cast to InternalTextureFormat — " +
+                    "InternalTextureFormatMixin (at/redi2go/photonics/impl/mixins/mc/blaze3d/opengl/InternalTextureFormatMixin) " +
+                    "must apply for ITextureFormat instances to be cast-compatible with InternalTextureFormat"
+            );
+        }
         int internalFormat = ((InternalTextureFormat) (Object) textureFormat).getGlFormat();
         GL11C.glBindTexture(GL12C.GL_TEXTURE_3D, handle);
         GL42C.glTexStorage3D(GL12C.GL_TEXTURE_3D, mipLevels, internalFormat, size.x(), size.y(), size.z());
