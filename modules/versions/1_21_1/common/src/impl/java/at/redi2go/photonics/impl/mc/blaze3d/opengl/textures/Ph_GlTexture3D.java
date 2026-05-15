@@ -32,6 +32,11 @@ public class Ph_GlTexture3D extends Ph_AbstractGlTexture<Vector3ic> implements I
     }
 
     @Override
+    protected Vector3ic copySize(Vector3ic value) {
+        return new Vector3i(value);
+    }
+
+    @Override
     protected Vector3ic divideForMip(Vector3ic size, int mipLevel) {
         return new Vector3i(
                 Math.max(size.x() >> mipLevel, 1),

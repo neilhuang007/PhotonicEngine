@@ -23,8 +23,12 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Optional;
 
 public class IrisUtil {
+    public static PipelineManagerExt getPipelineManager() {
+        return (PipelineManagerExt) Iris.getPipelineManager();
+    }
+
     public static Optional<PhotonicsExtension> getPhotonics() {
-        return ((PipelineManagerExt) Iris.getPipelineManager()).photonics();
+        return getPipelineManager().photonics();
     }
 
     public static int getBlockId(BlockState block) {

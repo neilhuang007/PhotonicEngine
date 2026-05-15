@@ -63,8 +63,15 @@ public class SingleFramebuffer extends GlFramebuffer implements InternalIrisFram
         if (currentSize.equals(newSize)) return;
 
         currentSize.set(newSize);
-        for (FramebufferAttachment attachment : attachments)
+        int[] drawBuffers = new int[attachments.size()];
+        for (int i = 0; i < attachments.size(); i++) {
+            FramebufferAttachment attachment = attachments.get(i);
             attachment.resize(newSize);
+            addColorAttachment(i, ((IGlTexture) attachment.texture()).handle());
+            drawBuffers[i] = GL30.GL_COLOR_ATTACHMENT0 + i;
+        }
+
+        IrisRenderSystem.drawBuffers(getGlId(), drawBuffers);
     }
 
     @Override

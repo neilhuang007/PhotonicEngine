@@ -9,8 +9,6 @@ import org.lwjgl.opengl.KHRDebug;
 import java.nio.ByteBuffer;
 import java.util.function.Supplier;
 
-import static org.lwjgl.opengl.GL11C.GL_NO_ERROR;
-import static org.lwjgl.opengl.GL11C.glGetError;
 import static org.lwjgl.opengl.GL15C.glDeleteBuffers;
 import static org.lwjgl.opengl.GL30C.GL_MAP_READ_BIT;
 import static org.lwjgl.opengl.GL30C.GL_MAP_WRITE_BIT;

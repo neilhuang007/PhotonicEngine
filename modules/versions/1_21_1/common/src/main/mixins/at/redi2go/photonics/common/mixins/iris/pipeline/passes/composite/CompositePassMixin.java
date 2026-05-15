@@ -34,7 +34,8 @@ public abstract class CompositePassMixin implements CompositeRendererPassExt {
         this.index = index;
     }
 
-    // 1.8.8: skipped — CompositeRenderer$Pass has no setupState() method; GlFramebuffer.bind() wrap is inapplicable
+    // Iris 1.8.8 binds framebuffers directly in CompositeRenderer.renderAll();
+    // the custom framebuffer bind/unbind wrap lives in CompositeRendererMixin.
 
     @Override
     public Optional<IrisFramebuffer> getFramebuffer() {

@@ -31,6 +31,11 @@ public class Ph_GlTexture2D extends Ph_AbstractGlTexture<Vector2ic> implements I
     }
 
     @Override
+    protected Vector2ic copySize(Vector2ic value) {
+        return new Vector2i(value);
+    }
+
+    @Override
     protected Vector2ic divideForMip(Vector2ic size, int mipLevel) {
         return new Vector2i(
                 Math.max(size.x() >> mipLevel, 1),

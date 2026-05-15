@@ -9,6 +9,7 @@ import at.redi2go.photonics.api.gpu.textures.IGpuTexture3D;
 import at.redi2go.photonics.impl.mc.blaze3d.opengl.buffer.Ph_GlGpuBuffer;
 import at.redi2go.photonics.impl.mc.blaze3d.opengl.buffer.Ph_GlGpuBufferSlice;
 import at.redi2go.photonics.impl.mc.blaze3d.opengl.textures.IGlTexture;
+import net.irisshaders.iris.gl.texture.InternalTextureFormat;
 import org.apache.commons.lang3.NotImplementedException;
 import org.joml.Vector2ic;
 import org.joml.Vector3ic;
@@ -29,9 +30,31 @@ public final class Ph_GlCommandEncoder implements ICommandEncoder {
     @Override
     public void clearColorTexture(IGpuTexture<?> gpuTexture, Vector4fc clearColor) {
         int handle = ((IGlTexture) gpuTexture).handle();
-        float[] clear = { clearColor.x(), clearColor.y(), clearColor.z(), clearColor.w() };
-        // GL clamps/converts on its own when the texture format is integer or non-RGBA.
-        GL44C.glClearTexImage(handle, 0, GL11C.GL_RGBA, GL11C.GL_FLOAT, clear);
+        InternalTextureFormat format = (InternalTextureFormat) (Object) gpuTexture.format();
+        var pixelFormat = format.getPixelFormat();
+
+        if (pixelFormat.isInteger()) {
+            int[] clear = {
+                    Math.round(clearColor.x()),
+                    Math.round(clearColor.y()),
+                    Math.round(clearColor.z()),
+                    Math.round(clearColor.w())
+            };
+            GL44C.glClearTexImage(
+                    handle,
+                    0,
+                    pixelFormat.getGlFormat(),
+                    isUnsignedIntegerFormat(format) ? GL11C.GL_UNSIGNED_INT : GL11C.GL_INT,
+                    clear
+            );
+        } else {
+            float[] clear = { clearColor.x(), clearColor.y(), clearColor.z(), clearColor.w() };
+            GL44C.glClearTexImage(handle, 0, pixelFormat.getGlFormat(), GL11C.GL_FLOAT, clear);
+        }
+    }
+
+    private static boolean isUnsignedIntegerFormat(InternalTextureFormat format) {
+        return format.name().endsWith("UI");
     }
 
     @Override

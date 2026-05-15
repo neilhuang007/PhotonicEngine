@@ -4,19 +4,73 @@ import at.redi2go.photonics.common.iris.IrisUtil;
 import at.redi2go.photonics.common.iris.buffers.GlBufferHolder;
 import at.redi2go.photonics.common.iris.pipeline.IrisRenderingPipelineExt;
 import at.redi2go.photonics.common.iris.pipeline.renderer.PhotonicsRenderer;
+import at.redi2go.photonics.common.mixins.iris.ShaderPackAccessor;
+import com.google.common.collect.ImmutableList;
+import com.llamalad7.mixinextras.sugar.Local;
+import it.unimi.dsi.fastutil.objects.Object2ObjectMaps;
+import net.irisshaders.iris.Iris;
+import net.irisshaders.iris.gl.buffer.ShaderStorageBufferHolder;
+import net.irisshaders.iris.gl.image.GlImage;
+import net.irisshaders.iris.pathways.CenterDepthSampler;
+import net.irisshaders.iris.pipeline.CustomTextureManager;
 import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
+import net.irisshaders.iris.shaderpack.ShaderPack;
+import net.irisshaders.iris.shaderpack.include.AbsolutePackPath;
+import net.irisshaders.iris.shaderpack.programs.ComputeSource;
 import net.irisshaders.iris.shaderpack.programs.ProgramSet;
+import net.irisshaders.iris.shaderpack.programs.ProgramSource;
+import net.irisshaders.iris.shaderpack.texture.TextureStage;
+import net.irisshaders.iris.shadows.ShadowRenderTargets;
+import net.irisshaders.iris.targets.BufferFlipper;
+import net.irisshaders.iris.targets.RenderTargets;
+import net.irisshaders.iris.uniforms.FrameUpdateNotifier;
+import net.irisshaders.iris.uniforms.custom.CustomUniforms;
 import org.jetbrains.annotations.Nullable;
+import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.List;
+import java.util.Set;
+import java.util.function.Supplier;
 
 @Mixin(IrisRenderingPipeline.class)
 public abstract class IrisRenderingPipelineMixin implements IrisRenderingPipelineExt {
+    @Shadow
+    @Final
+    private RenderTargets renderTargets;
+
+    @Shadow
+    private ShaderStorageBufferHolder shaderStorageBufferHolder;
+
+    @Shadow
+    @Final
+    private CustomTextureManager customTextureManager;
+
+    @Shadow
+    @Final
+    private FrameUpdateNotifier updateNotifier;
+
+    @Shadow
+    @Final
+    private CenterDepthSampler centerDepthSampler;
+
+    @Shadow
+    @Final
+    private Supplier<ShadowRenderTargets> shadowTargetsSupplier;
+
+    @Shadow
+    @Final
+    private Set<GlImage> customImages;
+
+    @Shadow
+    @Final
+    private CustomUniforms customUniforms;
+
     @Unique
     private GlBufferHolder bufferHolder;
     @Unique
@@ -30,12 +84,63 @@ public abstract class IrisRenderingPipelineMixin implements IrisRenderingPipelin
                     ordinal = 0
             )
     )
-    private void init(ProgramSet programSet, CallbackInfo ci) {
+    private void init(ProgramSet programSet, CallbackInfo ci, @Local BufferFlipper flipper) {
         bufferHolder = new GlBufferHolder();
         phRenderers = List.of();
 
         IrisUtil.getPhotonics()
                 .ifPresent(e -> e.registerBuffers(bufferHolder));
+
+        var renderers = IrisUtil.getPipelineManager().getRenderers();
+        var phRenderers = ImmutableList.<PhotonicsRenderer>builder();
+
+        for (var renderer : renderers) {
+            var passes = renderer.getPasses();
+
+            var compositeSources = new ProgramSource[passes.size()];
+            var computeSources = new ComputeSource[passes.size()][];
+
+            for (int i = 0; i < passes.size(); i++) {
+                var pass = passes.get(i);
+                compositeSources[i] = new ProgramSource(
+                        pass.name(),
+                        readSource(pass.vertexShader()),
+                        null,
+                        null,
+                        null,
+                        readSource(pass.fragmentShader()),
+                        programSet,
+                        null,
+                        null
+                );
+
+                computeSources[i] = new ComputeSource[0];
+            }
+
+            phRenderers.add(
+                    new PhotonicsRenderer(
+                            (IrisRenderingPipeline) (Object) this,
+                            programSet.getPackDirectives(),
+                            compositeSources,
+                            computeSources,
+                            renderTargets,
+                            shaderStorageBufferHolder,
+                            customTextureManager.getNoiseTexture(),
+                            updateNotifier,
+                            centerDepthSampler,
+                            flipper,
+                            shadowTargetsSupplier,
+                            customTextureManager.getCustomTextureIdMap()
+                                    .getOrDefault(TextureStage.DEFERRED, Object2ObjectMaps.emptyMap()),
+                            customTextureManager.getIrisCustomTextures(),
+                            customImages,
+                            customUniforms,
+                            passes
+                    )
+            );
+        }
+
+        this.phRenderers = phRenderers.build();
     }
 
     @Override
@@ -45,6 +150,18 @@ public abstract class IrisRenderingPipelineMixin implements IrisRenderingPipelin
 
     @Override
     public void onSelect() {
-        // 1.8.8: renderer activation deferred — full pipeline factory infrastructure not yet present
+        IrisUtil.getPipelineManager().setRenderers(phRenderers);
+    }
+
+    @Unique
+    private static String readSource(@Nullable String fileName) {
+        if (fileName == null) return null;
+
+        ShaderPack shaderPack = Iris.getCurrentPack().orElse(null);
+        if (shaderPack == null)
+            return null;
+
+        AbsolutePackPath path = AbsolutePackPath.fromAbsolutePath(fileName.startsWith("/") ? fileName : "/" + fileName);
+        return ((ShaderPackAccessor) shaderPack).getSourceProvider().apply(path);
     }
 }

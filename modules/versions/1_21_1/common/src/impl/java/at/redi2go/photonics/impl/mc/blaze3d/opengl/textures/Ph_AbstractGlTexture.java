@@ -36,14 +36,22 @@ public abstract class Ph_AbstractGlTexture<D> implements Disposable, IGlTexture 
         this.usage = usage;
         this.textureFormat = textureFormat;
         this.mipLevels = mipLevels;
-        this.size = size;
+        this.size = copySize(size);
 
-        this.handle = GlStateManager._genTexture();
-        initTexture(this.handle);
+        createTextureObject();
+    }
+
+    private void createTextureObject() {
+        int handle = GlStateManager._genTexture();
+        initTexture(handle);
+
+        this.handle = handle;
         applyDebugLabel();
     }
 
     protected abstract void initTexture(int handle);
+
+    protected abstract D copySize(D value);
 
     protected abstract D divideForMip(D size, int mipLevel);
 
@@ -93,17 +101,23 @@ public abstract class Ph_AbstractGlTexture<D> implements Disposable, IGlTexture 
     @Override
     public void close() {
         if (closed) return;
-        GlStateManager._deleteTexture(handle);
-        handle = 0;
+        destroyTexture();
         closed = true;
+    }
+
+    private void destroyTexture() {
+        if (handle != 0) {
+            GlStateManager._deleteTexture(handle);
+            handle = 0;
+        }
     }
 
     public void resize(D newSize) {
         if (closed) throw new IllegalStateException("closed");
-        GlStateManager._deleteTexture(handle);
-        this.size = newSize;
-        this.handle = GlStateManager._genTexture();
-        initTexture(this.handle);
-        applyDebugLabel();
+        if (size.equals(newSize)) return;
+
+        this.size = copySize(newSize);
+        destroyTexture();
+        createTextureObject();
     }
 }
