@@ -20,3 +20,14 @@ architectury {
         modImplementation(mainLibs.iris)
     }
 }
+
+subprojects {
+    plugins.withId("dev.architectury.loom") {
+        extensions.configure<net.fabricmc.loom.api.LoomGradleExtensionAPI>("loom") {
+            val accessWidener = file("src/main/resources/.accesswidener")
+            if (accessWidener.exists()) {
+                accessWidenerPath.set(accessWidener)
+            }
+        }
+    }
+}

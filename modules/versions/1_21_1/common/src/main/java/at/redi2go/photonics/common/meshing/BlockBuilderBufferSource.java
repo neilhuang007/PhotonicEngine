@@ -9,6 +9,7 @@ import at.redi2go.photonics.core.rendering.world.bakery.BlockBuilder;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.irisshaders.iris.layer.OuterWrappedRenderType;
 import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.RenderStateShard;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.resources.ResourceLocation;
 
@@ -41,14 +42,15 @@ public class BlockBuilderBufferSource extends MultiBufferSource.BufferSource {
         if (renderType instanceof OuterWrappedRenderType wrapped)
             renderType = ((OuterWrappedRenderTypeAccessor) wrapped).getWrapped();
 
-        Object compositeState;
+        RenderType.CompositeState compositeState;
         try {
             compositeState = ((CompositeRenderTypeAccessor) (Object) renderType).photonics$getState();
         } catch (ClassCastException ignored) {
             return Optional.empty();
         }
 
-        Object textureState = ((CompositeStateAccessor) compositeState).photonics$getTextureState();
+        RenderStateShard.EmptyTextureStateShard textureState =
+                ((CompositeStateAccessor) (Object) compositeState).photonics$getTextureState();
         return ((EmptyTextureStateShardAccessor) textureState).photonics$cutoutTexture();
     }
 

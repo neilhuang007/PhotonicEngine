@@ -12,6 +12,7 @@
   },
   "license": "All-Rights-Reserved",
   "environment": "client",
+  "accessWidener": ".accesswidener",
   "entrypoints": {
     "client": [
       "at.redi2go.photonics.client.PhotonicsClientFabric"

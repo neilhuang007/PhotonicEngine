@@ -17,4 +17,8 @@ tasks {
             )
         }
     }
+
+    sourcesJar {
+        duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    }
 }

@@ -16,6 +16,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Coerce;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.LocalCapture;
@@ -50,7 +51,18 @@ public abstract class CompositeRendererMixin {
             ),
             locals = LocalCapture.CAPTURE_FAILSOFT
     )
-    private void captureRenderPass(CallbackInfo ci, Object main, int i, int passesSize, Object renderPass, boolean ranCompute, float scaledWidth, float scaledHeight, int beginWidth, int beginHeight) {
+    private void captureRenderPass(
+            CallbackInfo ci,
+            @Coerce Object main,
+            int i,
+            int passesSize,
+            @Coerce Object renderPass,
+            boolean ranCompute,
+            float scaledWidth,
+            float scaledHeight,
+            int beginWidth,
+            int beginHeight
+    ) {
         phCurrentPass = renderPass;
     }
 
