@@ -6,6 +6,7 @@ import at.redi2go.photonics.api.gpu.systems.ICommandEncoder;
 import at.redi2go.photonics.api.gpu.textures.IGpuTexture;
 import at.redi2go.photonics.api.gpu.textures.IGpuTexture2D;
 import at.redi2go.photonics.api.gpu.textures.IGpuTexture3D;
+import at.redi2go.photonics.impl.mc.blaze3d.opengl.GlDsaCompat;
 import at.redi2go.photonics.impl.mc.blaze3d.opengl.buffer.Ph_GlGpuBuffer;
 import at.redi2go.photonics.impl.mc.blaze3d.opengl.buffer.Ph_GlGpuBufferSlice;
 import at.redi2go.photonics.impl.mc.blaze3d.opengl.textures.IGlTexture;
@@ -19,13 +20,10 @@ import org.lwjgl.opengl.GL44C;
 
 import java.nio.ByteBuffer;
 
-import static org.lwjgl.opengl.GL45C.glCopyNamedBufferSubData;
-import static org.lwjgl.opengl.GL45C.glNamedBufferSubData;
-
 // Standalone command encoder for the 1.21.1 port. The 1.21.11 module instead
 // installs an @Implements mixin onto Mojang's blaze3d GlCommandEncoder; that
 // class doesn't exist on 1.21.1 so we own the operations directly. Buffer ops
-// go through GL45 DSA entry points; writeToTexture mirrors upstream's TODO.
+// route through GlDsaCompat; writeToTexture mirrors upstream's TODO.
 public final class Ph_GlCommandEncoder implements ICommandEncoder {
     @Override
     public void clearColorTexture(IGpuTexture<?> gpuTexture, Vector4fc clearColor) {
@@ -60,14 +58,14 @@ public final class Ph_GlCommandEncoder implements ICommandEncoder {
     @Override
     public void writeToBuffer(IGpuBuffer buffer, ByteBuffer byteBuffer) {
         Ph_GlGpuBuffer target = (Ph_GlGpuBuffer) buffer;
-        glNamedBufferSubData(target.handle(), 0L, byteBuffer);
+        GlDsaCompat.namedBufferSubData(target.handle(), 0L, byteBuffer);
     }
 
     @Override
     public void writeToBuffer(IGpuBufferSlice slice, ByteBuffer byteBuffer) {
         Ph_GlGpuBufferSlice target = (Ph_GlGpuBufferSlice) slice;
         Ph_GlGpuBuffer parent = (Ph_GlGpuBuffer) target.buffer();
-        glNamedBufferSubData(parent.handle(), target.offset(), byteBuffer);
+        GlDsaCompat.namedBufferSubData(parent.handle(), target.offset(), byteBuffer);
     }
 
     @Override
@@ -96,7 +94,7 @@ public final class Ph_GlCommandEncoder implements ICommandEncoder {
         Ph_GlGpuBuffer srcBuffer = (Ph_GlGpuBuffer) srcSlice.buffer();
         Ph_GlGpuBuffer dstBuffer = (Ph_GlGpuBuffer) dstSlice.buffer();
 
-        glCopyNamedBufferSubData(
+        GlDsaCompat.copyNamedBufferSubData(
                 srcBuffer.handle(),
                 dstBuffer.handle(),
                 srcSlice.offset(),

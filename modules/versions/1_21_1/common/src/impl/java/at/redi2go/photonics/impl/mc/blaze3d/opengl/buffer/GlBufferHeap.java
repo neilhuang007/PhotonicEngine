@@ -6,6 +6,7 @@ import at.redi2go.photonics.api.gpu.buffers.heap.AbstractGpuBufferHeap;
 import at.redi2go.photonics.api.gpu.buffers.heap.IGpuBufferHeap;
 import at.redi2go.photonics.api.gpu.buffers.heap.MemoryView;
 import at.redi2go.photonics.api.gpu.systems.IGpuDevice;
+import at.redi2go.photonics.impl.mc.blaze3d.opengl.GlDsaCompat;
 import org.jetbrains.annotations.Nullable;
 
 import java.nio.ByteBuffer;
@@ -17,8 +18,6 @@ import java.util.function.Supplier;
 
 import static org.lwjgl.opengl.GL30C.GL_MAP_INVALIDATE_RANGE_BIT;
 import static org.lwjgl.opengl.GL30C.GL_MAP_WRITE_BIT;
-import static org.lwjgl.opengl.GL45C.glMapNamedBufferRange;
-import static org.lwjgl.opengl.GL45C.glUnmapNamedBuffer;
 
 public class GlBufferHeap extends AbstractGpuBufferHeap {
     /**
@@ -82,13 +81,13 @@ public class GlBufferHeap extends AbstractGpuBufferHeap {
             int offset = (int) region.begin();
             int length = (int) region.end() - offset;
 
-            var slice = glMapNamedBufferRange(handle, offset, length, GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT);
+            var slice = GlDsaCompat.mapNamedBufferRange(handle, offset, length, GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT);
             Objects.requireNonNull(slice, "failed to map buffer range");
 
             try {
                 slice.put(0, buffer, offset, length);
             } finally {
-                glUnmapNamedBuffer(handle);
+                GlDsaCompat.unmapNamedBuffer(handle);
             }
         }
     }

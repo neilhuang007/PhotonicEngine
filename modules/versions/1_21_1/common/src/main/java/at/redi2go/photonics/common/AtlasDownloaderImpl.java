@@ -6,11 +6,11 @@ import at.redi2go.photonics.core.rendering.world.bakery.texture.CpuTexture;
 import at.redi2go.photonics.core.rendering.world.bakery.texture.Rgba8Texture;
 import com.mojang.blaze3d.platform.NativeImage;
 import net.minecraft.client.Minecraft;
-import org.lwjgl.opengl.GL11;
 import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.client.renderer.texture.TextureManager;
 import net.minecraft.resources.ResourceLocation;
+import org.lwjgl.opengl.GL11;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -49,7 +49,7 @@ public class AtlasDownloaderImpl implements AtlasDownloader, Runnable {
                     try {
                         texture.bind();
 
-                        if (!(texture instanceof TextureAtlas atlas)) {
+                        if (!(texture instanceof TextureAtlas)) {
                             throw new IllegalArgumentException("Unsupported texture instance: " + texture.getClass().getName());
                         }
 

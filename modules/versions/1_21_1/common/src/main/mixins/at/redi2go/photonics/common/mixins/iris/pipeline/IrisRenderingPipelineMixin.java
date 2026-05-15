@@ -5,6 +5,7 @@ import at.redi2go.photonics.common.iris.buffers.GlBufferHolder;
 import at.redi2go.photonics.common.iris.pipeline.IrisRenderingPipelineExt;
 import at.redi2go.photonics.common.iris.pipeline.renderer.PhotonicsRenderer;
 import at.redi2go.photonics.common.mixins.iris.ShaderPackAccessor;
+import at.redi2go.photonics.core.iris.PhotonicsExtension;
 import com.google.common.collect.ImmutableList;
 import com.llamalad7.mixinextras.sugar.Local;
 import it.unimi.dsi.fastutil.objects.Object2ObjectMaps;
@@ -141,6 +142,17 @@ public abstract class IrisRenderingPipelineMixin implements IrisRenderingPipelin
         }
 
         this.phRenderers = phRenderers.build();
+    }
+
+    @Inject(
+            method = "beginTranslucents",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/irisshaders/iris/pipeline/CompositeRenderer;renderAll()V"
+            )
+    )
+    public void beginTranslucents(CallbackInfo ci) {
+        IrisUtil.getPhotonics().ifPresent(PhotonicsExtension::onRender);
     }
 
     @Override

@@ -3,6 +3,7 @@ package at.redi2go.photonics.impl.mc.blaze3d.opengl.buffer;
 import at.redi2go.photonics.api.gpu.buffers.BufferUsage;
 import at.redi2go.photonics.api.gpu.buffers.IGpuBuffer;
 import at.redi2go.photonics.api.gpu.buffers.IGpuBufferSlice;
+import at.redi2go.photonics.impl.mc.blaze3d.opengl.GlDsaCompat;
 import org.jetbrains.annotations.Nullable;
 import org.lwjgl.opengl.KHRDebug;
 
@@ -14,7 +15,6 @@ import static org.lwjgl.opengl.GL30C.GL_MAP_READ_BIT;
 import static org.lwjgl.opengl.GL30C.GL_MAP_WRITE_BIT;
 import static org.lwjgl.opengl.GL44C.GL_CLIENT_STORAGE_BIT;
 import static org.lwjgl.opengl.GL44C.GL_DYNAMIC_STORAGE_BIT;
-import static org.lwjgl.opengl.GL45C.*;
 
 public class Ph_GlGpuBuffer implements IGpuBuffer {
     private final int handle;
@@ -29,14 +29,14 @@ public class Ph_GlGpuBuffer implements IGpuBuffer {
         this.usage = usage;
         this.label = labelSupplier != null ? labelSupplier.get() : null;
 
-        this.handle = glCreateBuffers();
+        this.handle = GlDsaCompat.createBuffer();
 
         int storageFlags = GL_DYNAMIC_STORAGE_BIT;
         if ((usage & BufferUsage.MAP_READ) != 0) storageFlags |= GL_MAP_READ_BIT;
         if ((usage & BufferUsage.MAP_WRITE) != 0) storageFlags |= GL_MAP_WRITE_BIT;
         if ((usage & BufferUsage.HINT_CLIENT_STORAGE) != 0) storageFlags |= GL_CLIENT_STORAGE_BIT;
 
-        glNamedBufferStorage(handle, byteSize, storageFlags);
+        GlDsaCompat.namedBufferStorage(handle, byteSize, storageFlags);
 
         if (label != null) {
             try {
@@ -83,11 +83,6 @@ public class Ph_GlGpuBuffer implements IGpuBuffer {
         return handle;
     }
 
-    /** Returns true if MAP_WRITE was requested at creation time. */
-    public boolean wasMapWriteRequested() {
-        return (usage & BufferUsage.MAP_WRITE) != 0;
-    }
-
     public MappedView mapRange(long offset, long length, boolean read, boolean write) {
         return new MappedView(this, offset, length, read, write);
     }
@@ -104,7 +99,7 @@ public class Ph_GlGpuBuffer implements IGpuBuffer {
             if (read) flags |= GL_MAP_READ_BIT;
             if (write) flags |= GL_MAP_WRITE_BIT;
 
-            ByteBuffer mapped = glMapNamedBufferRange(buffer.handle, offset, length, flags);
+            ByteBuffer mapped = GlDsaCompat.mapNamedBufferRange(buffer.handle, offset, length, flags);
             if (mapped == null) {
                 throw new IllegalStateException(
                         "glMapNamedBufferRange returned null for buffer " + buffer.handle
@@ -122,7 +117,7 @@ public class Ph_GlGpuBuffer implements IGpuBuffer {
         public void close() {
             if (closed) return;
             closed = true;
-            glUnmapNamedBuffer(buffer.handle);
+            GlDsaCompat.unmapNamedBuffer(buffer.handle);
         }
     }
 }

@@ -29,18 +29,10 @@ public class Ph_GlGpuSampler implements IGpuSampler {
             int maxAnisotropy,
             OptionalDouble maxLod
     ) {
-        if (!(u instanceof Ph_GlAddressMode)) {
-            throw new IllegalArgumentException("addressModeU must be a Ph_GlAddressMode, got: " + u);
-        }
-        if (!(v instanceof Ph_GlAddressMode)) {
-            throw new IllegalArgumentException("addressModeV must be a Ph_GlAddressMode, got: " + v);
-        }
-        if (!(minFilter instanceof Ph_GlFilterMode)) {
-            throw new IllegalArgumentException("minFilter must be a Ph_GlFilterMode, got: " + minFilter);
-        }
-        if (!(magFilter instanceof Ph_GlFilterMode)) {
-            throw new IllegalArgumentException("magFilter must be a Ph_GlFilterMode, got: " + magFilter);
-        }
+        Ph_GlAddressMode glU = requireAddressMode("addressModeU", u);
+        Ph_GlAddressMode glV = requireAddressMode("addressModeV", v);
+        Ph_GlFilterMode glMin = requireFilterMode("minFilter", minFilter);
+        Ph_GlFilterMode glMag = requireFilterMode("magFilter", magFilter);
 
         this.addressModeU = u;
         this.addressModeV = v;
@@ -51,10 +43,10 @@ public class Ph_GlGpuSampler implements IGpuSampler {
 
         this.handle = GL33C.glGenSamplers();
 
-        GL33C.glSamplerParameteri(handle, GL11C.GL_TEXTURE_WRAP_S, ((Ph_GlAddressMode) u).glConstant);
-        GL33C.glSamplerParameteri(handle, GL11C.GL_TEXTURE_WRAP_T, ((Ph_GlAddressMode) v).glConstant);
-        GL33C.glSamplerParameteri(handle, GL11C.GL_TEXTURE_MIN_FILTER, ((Ph_GlFilterMode) minFilter).glConstant);
-        GL33C.glSamplerParameteri(handle, GL11C.GL_TEXTURE_MAG_FILTER, ((Ph_GlFilterMode) magFilter).glConstant);
+        GL33C.glSamplerParameteri(handle, GL11C.GL_TEXTURE_WRAP_S, glU.glConstant);
+        GL33C.glSamplerParameteri(handle, GL11C.GL_TEXTURE_WRAP_T, glV.glConstant);
+        GL33C.glSamplerParameteri(handle, GL11C.GL_TEXTURE_MIN_FILTER, glMin.glConstant);
+        GL33C.glSamplerParameteri(handle, GL11C.GL_TEXTURE_MAG_FILTER, glMag.glConstant);
 
         if (maxAnisotropy > 1) {
             try {
@@ -112,5 +104,15 @@ public class Ph_GlGpuSampler implements IGpuSampler {
         if (closed) return;
         closed = true;
         GL33C.glDeleteSamplers(handle);
+    }
+
+    private static Ph_GlAddressMode requireAddressMode(String paramName, IAddressMode value) {
+        if (value instanceof Ph_GlAddressMode gl) return gl;
+        throw new IllegalArgumentException(paramName + " must be a Ph_GlAddressMode, got: " + value);
+    }
+
+    private static Ph_GlFilterMode requireFilterMode(String paramName, IFilterMode value) {
+        if (value instanceof Ph_GlFilterMode gl) return gl;
+        throw new IllegalArgumentException(paramName + " must be a Ph_GlFilterMode, got: " + value);
     }
 }
