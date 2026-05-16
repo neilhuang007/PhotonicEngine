@@ -96,6 +96,7 @@ public class BlockBakeryImpl implements BlockBakery, BlockBuilder {
     private final Vector3f vertex = new Vector3f();
     private static final Vector3i VEC3I_ZERO = new Vector3i(0);
     private static final Vector3i VEC3I_ONE = new Vector3i(1);
+    private static final Vector3i VEC3I_SIXTEEN = new Vector3i(16);
 
     private final Vector3f voxelPos = new Vector3f();
     private final Vector3f worldPos = new Vector3f();
@@ -127,7 +128,10 @@ public class BlockBakeryImpl implements BlockBakery, BlockBuilder {
         }
 
         min.max(VEC3I_ZERO);
-        max.max(min);
+        max.min(VEC3I_SIXTEEN);
+
+        // Triangle is entirely outside the 16³ cell — nothing to voxelize.
+        if (max.x <= min.x || max.y <= min.y || max.z <= min.z) return;
 
         max.sub(min).max(VEC3I_ONE);
 

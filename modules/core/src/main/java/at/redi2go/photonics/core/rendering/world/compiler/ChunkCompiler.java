@@ -73,26 +73,29 @@ public class ChunkCompiler implements Runnable, RenderingComponent {
 
     @Override
     public void run() {
-        try {
-            while (!Thread.interrupted()) {
+        while (!Thread.interrupted()) {
+            BlockBakery bakery = null;
+            try {
                 var section = sectionQueue.take();
                 unloadChunks();
 
-                var bakery = nextBakery();
+                bakery = nextBakery();
 
                 final long[] hash = {0};
 
                 ILevel level = Minecraft.getLevel();
                 if (level == null) {
                     releaseBakery(bakery);
+                    bakery = null;
                     continue;
                 }
 
+                BlockBakery finalBakery = bakery;
                 section.forEachBlock((blockChunkOffset, blockPos, block) -> {
                     hash[0] = hash[0] * 31 + block.hashCode();
 
                     if (block.isAir()) return;
-                    bakery.submitBlock(
+                    finalBakery.submitBlock(
                             blockChunkOffset,
                             blockPos,
                             block,
@@ -102,15 +105,19 @@ public class ChunkCompiler implements Runnable, RenderingComponent {
 
                 if (Objects.equals(sectionHashes.put(section.pos(), hash[0]), hash[0])) {
                     releaseBakery(bakery);
+                    bakery = null;
                     continue;
                 }
 
                 builtSectionQueue.offer(section.pos(), new BuildResult(section.pos(), section.blockPos(), bakery));
+                bakery = null;
+            } catch (InterruptedException | IgnoredInterruptedException e) {
+                if (bakery != null) releaseBakery(bakery);
+                return;
+            } catch (Throwable t) {
+                if (bakery != null) releaseBakery(bakery);
+                Photonics.LOGGER.warn("Exception during chunk compilation (worker will continue)", t);
             }
-        } catch (InterruptedException | IgnoredInterruptedException e) {
-
-        } catch (Throwable e) {
-            Photonics.LOGGER.warn("An exception was throw during chunk compilation!", e);
         }
     }
 

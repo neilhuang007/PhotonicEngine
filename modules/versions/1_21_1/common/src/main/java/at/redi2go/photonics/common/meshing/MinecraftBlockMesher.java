@@ -1,6 +1,7 @@
 package at.redi2go.photonics.common.meshing;
 
 import at.redi2go.photonics.api.mc.Id;
+import at.redi2go.photonics.core.Photonics;
 import at.redi2go.photonics.api.mc.core.IBlockPos;
 import at.redi2go.photonics.api.mc.world.level.IBlockAndTintGetter;
 import at.redi2go.photonics.api.mc.world.level.IBlockState;
@@ -183,7 +184,7 @@ public class MinecraftBlockMesher implements BlockMesher {
                 BlockEntity entity = entityBlock.newBlockEntity(BlockPos.ZERO, blockState);
                 if (entity == null) return;
 
-                if (LEVEL_REQUIRED_FOR.contains(blockState.getBlock()) && blockAndTintGetter instanceof Level level)
+                if (blockAndTintGetter instanceof Level level)
                     entity.setLevel(level);
 
                 BlockEntityRenderer<BlockEntity> renderer =
@@ -195,14 +196,22 @@ public class MinecraftBlockMesher implements BlockMesher {
 
                 poseStack.pushPose();
                 try {
-                    renderer.render(
-                            entity,
-                            0f,
-                            poseStack,
-                            bufferSource,
-                            LightTexture.FULL_BRIGHT,
-                            OverlayTexture.NO_OVERLAY
-                    );
+                    try {
+                        renderer.render(
+                                entity,
+                                0f,
+                                poseStack,
+                                bufferSource,
+                                LightTexture.FULL_BRIGHT,
+                                OverlayTexture.NO_OVERLAY
+                        );
+                    } catch (Throwable t) {
+                        Photonics.LOGGER.debug(
+                                "Skipping BE voxelization for {}: {}",
+                                entity.getClass().getSimpleName(),
+                                t.toString()
+                        );
+                    }
                 } finally {
                     poseStack.popPose();
                 }
