@@ -12,6 +12,9 @@ import org.spongepowered.asm.mixin.Overwrite;
 public interface RegistriesImpl {
     @Overwrite
     static IHolderLookup<IBlock> block() {
-        return (IHolderLookup<IBlock>) BuiltInRegistries.BLOCK;
+        // 1.21.1: Registry<T> does not extend HolderLookup; obtain the HolderLookup view
+        // via Registry#asLookup() (returns HolderLookup.RegistryLookup<T>, which
+        // extends HolderLookup<T> and is what HolderLookupMixin actually targets).
+        return (IHolderLookup<IBlock>) BuiltInRegistries.BLOCK.asLookup();
     }
 }
