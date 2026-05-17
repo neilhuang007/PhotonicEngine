@@ -2,11 +2,14 @@ package at.redi2go.photonics.common.mixins.iris;
 
 import at.redi2go.photonics.api.shaders.AlphaMode;
 import at.redi2go.photonics.api.shaders.LightingMode;
+import at.redi2go.photonics.common.PhotonicsPropertiesImpl;
 import at.redi2go.photonics.common.iris.ShaderPropertiesBridge;
 import com.llamalad7.mixinextras.sugar.Local;
 import it.unimi.dsi.fastutil.booleans.BooleanConsumer;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.shaderpack.properties.ShaderProperties;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
@@ -37,6 +40,28 @@ import static at.redi2go.photonics.api.shaders.PhotonicsProperties.SEPARATE_HAND
 
 @Mixin(ShaderProperties.class)
 public abstract class ShaderPropertiesMixin {
+    @Unique private static final Logger LOGGER = LogManager.getLogger("Photonics/ShaderPropertiesMixin");
+    @Unique private PhotonicsPropertiesImpl phProperties;
+    @Unique private boolean phPropertiesInitialized;
+
+    @Unique
+    private void photonics$ensurePropertiesConsumed() {
+        if (phPropertiesInitialized) return;
+        phPropertiesInitialized = true;
+        phProperties = ShaderPropertiesBridge.consume();
+        if (phProperties == null) {
+            LOGGER.warn("ShaderPropertiesBridge returned null; Photonics-specific shader keys will be ignored");
+        }
+    }
+
+    @Inject(
+            method = "<init>(Ljava/lang/String;Lnet/irisshaders/iris/shaderpack/option/ShaderPackOptions;Ljava/lang/Iterable;)V",
+            at = @At("RETURN")
+    )
+    private void finalizePhotonicsProperties(CallbackInfo ci) {
+        photonics$ensurePropertiesConsumed();
+    }
+
     @Inject(
             method = "lambda$new$54",
             at = @At(
@@ -49,7 +74,8 @@ public abstract class ShaderPropertiesMixin {
             @Local(name = "key") String key,
             @Local(name = "value") String value
     ) {
-        var phProperties = ShaderPropertiesBridge.getProperties();
+        photonics$ensurePropertiesConsumed();
+        if (phProperties == null) return;
 
         handleBooleanDirective(key, value, ENABLED_KEY, e -> phProperties.enabled = e);
         handleFloatDirective(key, value, RENDER_SCALE_KEY, e -> phProperties.renderScale = e);

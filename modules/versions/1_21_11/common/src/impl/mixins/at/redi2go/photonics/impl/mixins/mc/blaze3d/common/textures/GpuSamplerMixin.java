@@ -19,7 +19,8 @@ public abstract class GpuSamplerMixin implements IGpuSampler {
     @Shadow
     public abstract AddressMode getAddressModeU();
 
-    public IAddressMode ph$addressModeU() {
+    @Override
+    public IAddressMode addressModeU() {
         return (IAddressMode) (Object) getAddressModeU();
     }
 

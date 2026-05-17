@@ -100,7 +100,7 @@ public class GlTextureFormats implements TextureFormats {
 
     @Override
     public Object rg16f() {
-        return InternalTextureFormat.RGB16F;
+        return InternalTextureFormat.RG16F;
     }
 
     @Override

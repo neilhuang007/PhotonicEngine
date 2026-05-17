@@ -65,14 +65,14 @@ public abstract class ShaderPackMixin implements IShaderPack {
 
         supportsPhotonics = properties.containsKey(PhotonicsProperties.ENABLED_KEY);
         patcher = new ShaderPatcher(this);
-        PatcherBridge.PATCHER = patcher;
+        PatcherBridge.set(patcher);
 
         if (!supportsPhotonics && patcher.hasPatch())
             phProperties.enabled = Boolean.parseBoolean(
                     changedConfigs.getOrDefault("PHOTONICS_ENABLED", "true")
             );
 
-        ShaderPropertiesBridge.PROPERTIES = phProperties;
+        ShaderPropertiesBridge.set(phProperties);
     }
 
     @Override

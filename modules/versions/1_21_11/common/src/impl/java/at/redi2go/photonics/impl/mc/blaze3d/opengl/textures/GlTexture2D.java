@@ -17,6 +17,8 @@ import org.jspecify.annotations.Nullable;
 
 import java.util.function.Supplier;
 
+import org.lwjgl.opengl.GL11C;
+
 import static org.lwjgl.opengl.GL11.GL_TEXTURE_2D;
 import static org.lwjgl.opengl.GL11.glBindTexture;
 import static org.lwjgl.opengl.GL42.glTexStorage2D;
@@ -29,15 +31,20 @@ public class GlTexture2D extends AbstractGlTexture<Vector2ic> implements IGpuTex
     @Override
     public Vector2ic size(int mipLevel) {
         return new Vector2i(
-                size.x() >> mipLevel,
-                size.y() >> mipLevel
+                Math.max(size.x() >> mipLevel, 1),
+                Math.max(size.y() >> mipLevel, 1)
         );
     }
 
     @Override
     protected void initTexture(int handle) {
-        glBindTexture(GL_TEXTURE_2D, handle);
-        glTexStorage2D(GL_TEXTURE_2D, mipLevels, textureFormat.getGlFormat(), size.x(), size.y());
+        int previousTexture = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
+        try {
+            glBindTexture(GL_TEXTURE_2D, handle);
+            glTexStorage2D(GL_TEXTURE_2D, mipLevels, textureFormat.getGlFormat(), size.x(), size.y());
+        } finally {
+            GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, previousTexture);
+        }
     }
 
     @Override

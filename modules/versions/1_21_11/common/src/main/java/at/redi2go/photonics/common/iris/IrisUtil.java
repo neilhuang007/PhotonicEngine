@@ -6,12 +6,12 @@ import at.redi2go.photonics.api.gpu.textures.IGpuTexture2D;
 import at.redi2go.photonics.api.gpu.textures.IGpuTexture3D;
 import at.redi2go.photonics.common.iris.pipeline.IrisRenderingPipelineExt;
 import at.redi2go.photonics.common.iris.pipeline.PipelineManagerExt;
+import at.redi2go.photonics.common.iris.sampler.Ph_IrisGlSampler;
 import at.redi2go.photonics.common.mixins.iris.pipeline.sampler.GlSamplerAccessor;
 import at.redi2go.photonics.core.iris.PhotonicsExtension;
 import at.redi2go.photonics.impl.mc.blaze3d.opengl.textures.AbstractGlTexture;
 import it.unimi.dsi.fastutil.ints.IntSet;
 import net.irisshaders.iris.Iris;
-import net.irisshaders.iris.gl.sampler.GlSampler;
 import net.irisshaders.iris.gl.texture.TextureType;
 import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
 import net.irisshaders.iris.pipeline.WorldRenderingPipeline;
@@ -64,7 +64,7 @@ public class IrisUtil {
         return ((AbstractGlTexture<?>) texture).handle();
     }
 
-    public static GlSampler getGlSampler(IGpuSampler sampler) {
-        return new GlSampler(((GlSamplerAccessor) sampler).getId());
+    public static Ph_IrisGlSampler getGlSampler(IGpuSampler sampler) {
+        return new Ph_IrisGlSampler(() -> ((GlSamplerAccessor) sampler).getId());
     }
 }

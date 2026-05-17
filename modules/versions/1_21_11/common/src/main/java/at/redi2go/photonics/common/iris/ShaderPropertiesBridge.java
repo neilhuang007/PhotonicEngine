@@ -2,13 +2,16 @@ package at.redi2go.photonics.common.iris;
 
 import at.redi2go.photonics.common.PhotonicsPropertiesImpl;
 
-/**
- * Used to pass the {@link PhotonicsPropertiesImpl} to the constructor of {@link net.irisshaders.iris.shaderpack.properties.ShaderProperties}
- */
 public class ShaderPropertiesBridge {
-    public static PhotonicsPropertiesImpl PROPERTIES = null;
+    private static final ThreadLocal<PhotonicsPropertiesImpl> PROPERTIES = new ThreadLocal<>();
 
-    public static PhotonicsPropertiesImpl getProperties() {
-        return PROPERTIES;
+    public static void set(PhotonicsPropertiesImpl properties) {
+        PROPERTIES.set(properties);
+    }
+
+    public static PhotonicsPropertiesImpl consume() {
+        var result = PROPERTIES.get();
+        PROPERTIES.remove();
+        return result;
     }
 }

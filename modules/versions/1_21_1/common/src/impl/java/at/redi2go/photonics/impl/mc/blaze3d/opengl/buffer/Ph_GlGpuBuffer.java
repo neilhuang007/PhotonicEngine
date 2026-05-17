@@ -5,6 +5,7 @@ import at.redi2go.photonics.api.gpu.buffers.IGpuBuffer;
 import at.redi2go.photonics.api.gpu.buffers.IGpuBufferSlice;
 import at.redi2go.photonics.impl.mc.blaze3d.opengl.GlDsaCompat;
 import org.jetbrains.annotations.Nullable;
+import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.KHRDebug;
 
 import java.nio.ByteBuffer;
@@ -15,12 +16,16 @@ import static org.lwjgl.opengl.GL30C.GL_MAP_READ_BIT;
 import static org.lwjgl.opengl.GL30C.GL_MAP_WRITE_BIT;
 import static org.lwjgl.opengl.GL44C.GL_CLIENT_STORAGE_BIT;
 import static org.lwjgl.opengl.GL44C.GL_DYNAMIC_STORAGE_BIT;
+import static org.lwjgl.opengl.GL44C.GL_MAP_COHERENT_BIT;
+import static org.lwjgl.opengl.GL44C.GL_MAP_PERSISTENT_BIT;
 
 public class Ph_GlGpuBuffer implements IGpuBuffer {
     private final int handle;
     private final long size;
     private final @BufferUsage int usage;
     private final @Nullable String label;
+    private final boolean persistent;
+    private final @Nullable ByteBuffer persistentMapping;
 
     private boolean closed = false;
 
@@ -51,12 +56,36 @@ public class Ph_GlGpuBuffer implements IGpuBuffer {
                 | BufferUsage.UNIFORM_TEXEL_BUFFER;
         final int glUsage = usage & glUsageMask;
 
+        // Persistent mapping requires: caller wants mapping, caller did not opt out, and
+        // the GL context supports immutable buffer storage (GL 4.4+ or ARB_buffer_storage).
+        boolean wantsMap = (glUsage & (BufferUsage.MAP_READ | BufferUsage.MAP_WRITE)) != 0;
+        boolean optedOut = (usage & GlBufferHeap.NO_PERSISTENCE_MAPPING) != 0;
+        boolean persistentAvailable = GL.getCapabilities().OpenGL44 || GL.getCapabilities().GL_ARB_buffer_storage;
+        this.persistent = wantsMap && !optedOut && persistentAvailable;
+
         int storageFlags = GL_DYNAMIC_STORAGE_BIT;
         if ((glUsage & BufferUsage.MAP_READ) != 0) storageFlags |= GL_MAP_READ_BIT;
         if ((glUsage & BufferUsage.MAP_WRITE) != 0) storageFlags |= GL_MAP_WRITE_BIT;
         if ((glUsage & BufferUsage.HINT_CLIENT_STORAGE) != 0) storageFlags |= GL_CLIENT_STORAGE_BIT;
 
+        // persistent mapping requires both read+write storage and map flags
+        if (persistent) storageFlags |= GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT | GL_MAP_READ_BIT | GL_MAP_WRITE_BIT;
+
         GlDsaCompat.namedBufferStorage(handle, byteSize, storageFlags);
+
+        if (persistent) {
+            int mapFlags = GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT | GL_MAP_READ_BIT | GL_MAP_WRITE_BIT;
+            ByteBuffer mapped = GlDsaCompat.mapNamedBufferRange(handle, 0, byteSize, mapFlags);
+            if (mapped == null) {
+                throw new IllegalStateException(
+                        "glMapNamedBufferRange returned null for persistent mapping: handle=" + handle
+                                + " size=" + byteSize
+                                + " flags=0x" + Integer.toHexString(mapFlags));
+            }
+            this.persistentMapping = mapped;
+        } else {
+            this.persistentMapping = null;
+        }
 
         if (label != null) {
             try {
@@ -95,6 +124,8 @@ public class Ph_GlGpuBuffer implements IGpuBuffer {
     public void close() {
         if (closed) return;
         closed = true;
+        // unmap persistent mapping before deleting the buffer object
+        if (persistentMapping != null) GlDsaCompat.unmapNamedBuffer(handle);
         glDeleteBuffers(handle);
     }
 
@@ -104,16 +135,33 @@ public class Ph_GlGpuBuffer implements IGpuBuffer {
     }
 
     public MappedView mapRange(long offset, long length, boolean read, boolean write) {
+        if (persistentMapping != null) {
+            // slice the long-lived pointer — no GL call needed
+            ByteBuffer slice = persistentMapping.duplicate()
+                    .position((int) offset)
+                    .limit((int) (offset + length))
+                    .slice();
+            return new MappedView(this, slice);
+        }
         return new MappedView(this, offset, length, read, write);
     }
 
     public static final class MappedView implements IGpuBuffer.MappedView {
         private final Ph_GlGpuBuffer buffer;
         private final ByteBuffer data;
+        private final boolean persistentParent;
         private boolean closed = false;
+
+        // constructor for the persistent path — no GL mapping, data is a pre-sliced view
+        MappedView(Ph_GlGpuBuffer buffer, ByteBuffer persistentSlice) {
+            this.buffer = buffer;
+            this.data = persistentSlice;
+            this.persistentParent = true;
+        }
 
         MappedView(Ph_GlGpuBuffer buffer, long offset, long length, boolean read, boolean write) {
             this.buffer = buffer;
+            this.persistentParent = false;
 
             int flags = 0;
             if (read) flags |= GL_MAP_READ_BIT;
@@ -137,7 +185,8 @@ public class Ph_GlGpuBuffer implements IGpuBuffer {
         public void close() {
             if (closed) return;
             closed = true;
-            GlDsaCompat.unmapNamedBuffer(buffer.handle);
+            // persistent views are owned by the parent buffer; only unmap on the non-persistent path
+            if (!persistentParent) GlDsaCompat.unmapNamedBuffer(buffer.handle);
         }
     }
 }

@@ -8,6 +8,9 @@ import org.jspecify.annotations.Nullable;
 
 import java.util.function.Supplier;
 
+import org.lwjgl.opengl.GL11C;
+import org.lwjgl.opengl.GL12C;
+
 import static org.lwjgl.opengl.GL11.glBindTexture;
 import static org.lwjgl.opengl.GL12.GL_TEXTURE_3D;
 import static org.lwjgl.opengl.GL42.glTexStorage3D;
@@ -20,16 +23,21 @@ public class GlTexture3D extends AbstractGlTexture<Vector3ic> implements IGpuTex
     @Override
     public Vector3ic size(int mipLevel) {
         return new Vector3i(
-                size.x() >> mipLevel,
-                size.y() >> mipLevel,
-                size.z() >> mipLevel
+                Math.max(size.x() >> mipLevel, 1),
+                Math.max(size.y() >> mipLevel, 1),
+                Math.max(size.z() >> mipLevel, 1)
         );
     }
 
     @Override
     protected void initTexture(int handle) {
-        glBindTexture(GL_TEXTURE_3D, handle);
-        glTexStorage3D(GL_TEXTURE_3D, mipLevels, textureFormat.getGlFormat(), size.x(), size.y(), size.z());
+        int previousTexture = GL11C.glGetInteger(GL12C.GL_TEXTURE_BINDING_3D);
+        try {
+            glBindTexture(GL_TEXTURE_3D, handle);
+            glTexStorage3D(GL_TEXTURE_3D, mipLevels, textureFormat.getGlFormat(), size.x(), size.y(), size.z());
+        } finally {
+            GL11C.glBindTexture(GL12C.GL_TEXTURE_3D, previousTexture);
+        }
     }
 
     @Override

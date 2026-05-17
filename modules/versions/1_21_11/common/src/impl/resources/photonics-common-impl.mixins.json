@@ -14,6 +14,7 @@
     "mc.blaze3d.common.textures.IAddressModeImpl",
     "mc.blaze3d.common.textures.FilterModeMixin",
     "mc.blaze3d.common.textures.IFilterModeImpl",
+    "mc.blaze3d.common.textures.GpuSamplerMixin",
     "mc.blaze3d.common.textures.ITextureFormatImpl",
     "mc.blaze3d.opengl.debug.GlCoreDebugLabelMixin",
     "mc.blaze3d.opengl.debug.GlEmptyDebugLabelMixin",
