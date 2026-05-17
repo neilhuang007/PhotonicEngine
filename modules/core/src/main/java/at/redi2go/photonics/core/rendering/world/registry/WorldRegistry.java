@@ -1,162 +1,242 @@
 package at.redi2go.photonics.core.rendering.world.registry;
 
-import at.redi2go.photonics.api.Disposable;
-import at.redi2go.photonics.core.Photonics;
+import at.redi2go.photonics.api.mc.core.IBlockPos;
+import at.redi2go.photonics.api.mc.world.level.IBlockAndTintGetter;
+import at.redi2go.photonics.api.mc.world.level.IBlockState;
 import at.redi2go.photonics.core.collect.ConcurrentLong2ObjectMap;
 import at.redi2go.photonics.core.rendering.RenderingComponent;
-import at.redi2go.photonics.core.rendering.world.bakery.BlockBakery;
-import at.redi2go.photonics.core.rendering.world.block.BlockProvider;
 import at.redi2go.photonics.core.rendering.world.allocator.WorldAllocator;
+import at.redi2go.photonics.core.rendering.world.bakery.BlockBakery;
+import at.redi2go.photonics.core.rendering.world.bakery.BlockMeshState;
+import at.redi2go.photonics.core.rendering.world.bakery.BlockMesher;
+import at.redi2go.photonics.core.rendering.world.bakery.texture.AtlasDownloader;
+import at.redi2go.photonics.core.rendering.world.block.BlockModel;
 import at.redi2go.photonics.core.rendering.world.block.palette.PaletteEntry;
 import at.redi2go.photonics.core.rendering.world.block.palette.PaletteTexture;
+import at.redi2go.photonics.core.rendering.world.block.palette.TintBuilder;
 import at.redi2go.photonics.core.rendering.world.registry.block.BlockHeader;
+import at.redi2go.photonics.core.rendering.world.registry.block.BlockModelImpl;
 import at.redi2go.photonics.core.rendering.world.registry.block.BlockVoxel;
 import at.redi2go.photonics.core.rendering.world.registry.block.builder.BlockModelBuilder;
 import at.redi2go.photonics.core.rendering.world.registry.block.template.BlockModelTemplate;
+import at.redi2go.photonics.core.rendering.world.registry.objects.ObjectManager;
+import at.redi2go.photonics.core.rendering.world.registry.objects.WorldObject;
+import at.redi2go.photonics.core.rendering.world.registry.optimization.OptimizationService;
+import org.apache.commons.lang3.NotImplementedException;
+import org.jetbrains.annotations.Nullable;
+import org.joml.Vector3i;
 
 import java.util.List;
-import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
 public class WorldRegistry implements RenderingComponent {
-    private static final int OPTIMIZATION_THREAD_COUNT = 1;
+    private final ObjectManager objectManager = new ObjectManager();
 
     private final WorldAllocator worldAllocator;
     private final PaletteTexture paletteTexture;
 
-    private final ConcurrentLong2ObjectMap<CompletionStage<BlockProvider>> blocks = new ConcurrentLong2ObjectMap<>(16);
-    private final ConcurrentHashMap<Object, MemoryOwner<?, ?>> hashedObjectCache = new ConcurrentHashMap<>();
-    final Queue<Disposable> freeQueue = new ConcurrentLinkedQueue<>();
+    private final BlockBakery blockBakery;
+    private final OptimizationService optimizationService;
 
-    private final ExecutorService optimizationService;
 
-    public WorldRegistry(WorldAllocator worldAllocator, PaletteTexture paletteTexture) {
+    private final ConcurrentHashMap<Object, WorldObject> objectCache = new ConcurrentHashMap<>();
+
+    private final ConcurrentHashMap<BlockMeshState, CompletableFuture<@Nullable BlockModel>> blockModelCache = new ConcurrentHashMap<>();
+    private final ConcurrentLong2ObjectMap<CompletableFuture<BlockModelTemplate>> modelTemplateCache = new ConcurrentLong2ObjectMap<>(16);
+
+    public WorldRegistry(
+            WorldAllocator worldAllocator,
+            PaletteTexture paletteTexture,
+            AtlasDownloader atlasDownloader,
+            OptimizationService optimizationService
+    ) {
         this.worldAllocator = worldAllocator;
         this.paletteTexture = paletteTexture;
 
-        AtomicInteger threadCount = new AtomicInteger();
-        optimizationService =
-                Executors.newFixedThreadPool(
-                        OPTIMIZATION_THREAD_COUNT,
-                        (r) -> new Thread(r, "Photonics Optimization Thread #" + threadCount.incrementAndGet())
-                );
+        this.blockBakery = BlockBakery.newBakery(atlasDownloader);
+        this.optimizationService = optimizationService;
+    }
+
+    public ObjectManager objectManager() {
+        return objectManager;
     }
 
     public WorldAllocator worldAllocator() {
         return worldAllocator;
     }
 
+    public PaletteTexture paletteTexture() {
+        return paletteTexture;
+    }
 
-    // Hashed objects
+    public OptimizationService optimizationService() {
+        return optimizationService;
+    }
+
 
     @SuppressWarnings("unchecked")
-    private <T extends MemoryOwner<U, ?>, K, U> MemoryOwner.ManagedRef<U> cacheObject(
+    private <T extends WorldObject<?>, K> T cacheObjectWeak(
             K key,
             Function<K, T> supplier,
             Consumer<T> allocator
     ) {
-        var value = hashedObjectCache.get(key);
-        if (value != null) return (MemoryOwner.ManagedRef<U>) value.makeManagedRef();
+        var value = objectCache.get(key);
+        if (value != null) return (T) value;
 
         var newValue = supplier.apply(key);
-        var result = hashedObjectCache.putIfAbsent(newValue, newValue);
+        var result = objectCache.putIfAbsent(newValue, newValue);
         if (result == null) {
             allocator.accept(newValue);
-            return newValue.makeManagedRef();
+            return newValue;
         }
 
-        return (MemoryOwner.ManagedRef<U>) result.makeManagedRef();
+        return (T) result;
     }
 
-    void removeObject(MemoryOwner<?, ?> obj) {
-        hashedObjectCache.remove(obj);
+    public void removeObject(WorldObject<?> object) {
+        objectCache.remove(object);
     }
 
 
-    // Allocation methods
 
-    public MemoryOwner.ManagedRef<PaletteObject.Entry> allocatePalette(PaletteEntry entry) {
+    public PaletteObject allocatePaletteWeak(PaletteEntry entry) {
         entry.computeHashCode();
 
-        return cacheObject(
+        return cacheObjectWeak(
                 entry,
                 e -> new PaletteObject(this, e),
-                e -> e.allocate(paletteTexture)
+                PaletteObject::allocate
         );
     }
 
-    public MemoryOwner.ManagedRef<BlockVoxel> allocateBlockVoxel(long hash, int[] data) {
-        return cacheObject(
+    public BlockVoxel allocateBlockVoxelWeak(long hash, int[] data) {
+        return cacheObjectWeak(
                 new BlockVoxel(this, hash),
                 e -> e,
                 e -> e.allocate(data)
         );
     }
 
-    public MemoryOwner.ManagedRef<BlockHeader> allocateBlockHeader(
+    public BlockHeader allocateBlockHeaderWeak(
             int[] tint,
-            List<MemoryOwner.ManagedRef<PaletteObject.Entry>> palette,
-            MemoryOwner.ManagedRef<BlockVoxel> blockVoxel,
+            List<PaletteObject> weakPalette,
+            BlockVoxel weakBlockVoxel,
             long voxelHash,
             long tintHash
     ) {
-        return cacheObject(
-                new BlockHeader(this, tint, palette, blockVoxel, voxelHash, tintHash),
+        return cacheObjectWeak(
+                new BlockHeader(this, tint, weakPalette, weakBlockVoxel, voxelHash, tintHash),
                 e -> e,
                 BlockHeader::allocate
         );
     }
 
-    public CompletionStage<BlockProvider> createBlockModel(BlockBakery.MeshResult blockMesh) {
-        return blocks.computeIfAbsent(blockMesh.vertexHash(), (hash) -> {
-            var result = new CompletableFuture<BlockProvider>();
+    public void removeModelTemplate(long vertexHash) {
+        modelTemplateCache.remove(vertexHash);
+    }
 
-            try {
-                var builder = new BlockModelBuilder(this, hash, blockMesh.tintData());
+    public void removeBlockModel(BlockMeshState blockMeshState) {
+        blockModelCache.remove(blockMeshState);
+    }
 
-                blockMesh.bake(builder);
-                result.complete(builder.build());
-            } catch (Throwable t) {
-                result.completeExceptionally(t);
+    private CompletionStage<BlockModelTemplate> cacheModelTemplateWeak(BlockBakery.MeshResult blockMesh) {
+        CompletableFuture<BlockModelTemplate> future = new CompletableFuture<>();
+        var resultFuture = modelTemplateCache.putIfAbsent(blockMesh.vertexHash(), future);
+
+        if (resultFuture != null) return resultFuture;
+
+        try {
+            var builder = new BlockModelBuilder(this, blockMesh.vertexHash(), blockMesh.tintData());
+
+            blockMesh.bake(builder);
+            blockMesh.close();
+
+            future.complete(builder.build());
+        } catch (Throwable t) {
+            future.completeExceptionally(t);
+        }
+
+        blockMesh.close();
+
+        return future;
+    }
+
+    public <T extends BlockMeshState> CompletionStage<@Nullable BlockModel> getBlockModel(
+            BlockMesher<T> blockMesher,
+            Vector3i blockChunkOffset,
+            IBlockPos pos,
+            IBlockState blockState,
+            IBlockAndTintGetter blockAndTintGetter
+    ) {
+        T meshState = blockMesher.extractMeshState(
+                blockChunkOffset,
+                pos,
+                blockState,
+                blockAndTintGetter
+        );
+
+        CompletableFuture<@Nullable BlockModel> future = new CompletableFuture<>();
+
+        try(var lock = objectManager.acquireLock()) {
+            if (meshState.shouldCache()) {
+                var resultFuture = blockModelCache.putIfAbsent(meshState, future);
+                if (resultFuture != null)
+                    return acquireModelReference(resultFuture);
             }
 
-            return result;
+            var meshResult = blockBakery.meshBlock(
+                    blockMesher,
+                    meshState,
+                    blockChunkOffset,
+                    pos,
+                    blockState,
+                    blockAndTintGetter
+            );
+
+            meshState.prepareCacheUse();
+            if (meshResult == null) {
+                future.complete(null);
+                return future;
+            }
+
+            TintBuilder.Result tintInfo = meshResult.tintData();
+            cacheModelTemplateWeak(meshResult)
+                    .handle((template, e) -> {
+                        try {
+                            if (e != null) {
+                                future.completeExceptionally(e);
+                            } else {
+                                var variant = template.createVariantWeak(tintInfo);
+                                variant.addMeshState(meshState);
+
+                                future.complete(variant);
+                            }
+                        } catch (Throwable t) {
+                            future.completeExceptionally(t);
+                        }
+
+                        return null;
+                    });
+
+            return acquireModelReference(future);
+        } catch (Throwable t) {
+            future.completeExceptionally(t);
+            return future;
+        }
+    }
+
+    private CompletionStage<@Nullable BlockModel> acquireModelReference(CompletionStage<@Nullable BlockModel> originalFuture) {
+        // Acquiring references is safe in thenApply as its either completed now, in which case we already hold the lock
+        // or its being voxelized by a thread which also holds the lock, which will process all the thenApply dependants on that thread
+        return originalFuture.thenApply((e) -> {
+            if (e != null)
+                ((BlockModelImpl) e).acquireReference();
+
+            return e;
         });
-    }
-
-    public void removeBlockModel(long vertexHash) {
-        blocks.remove(vertexHash);
-    }
-
-    public void scheduleOptimization(Runnable runnable) {
-        try {
-            optimizationService.execute(runnable);
-        } catch (RejectedExecutionException e) {
-            // Nothing
-        }
-    }
-
-    public void freeUnusedBlocks() {
-        while (!freeQueue.isEmpty()) {
-            var handle = freeQueue.poll();
-            if (handle == null) return;
-
-            handle.close();
-        }
-    }
-
-    @Override
-    public void close() {
-        optimizationService.shutdownNow();
-        worldAllocator.close();
     }
 }

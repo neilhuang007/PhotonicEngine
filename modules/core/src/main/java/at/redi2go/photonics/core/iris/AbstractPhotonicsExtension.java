@@ -1,7 +1,6 @@
 package at.redi2go.photonics.core.iris;
 
 import at.redi2go.photonics.api.Disposable;
-import at.redi2go.photonics.api.gpu.systems.IRenderSystem;
 import at.redi2go.photonics.api.mc.Minecraft;
 import at.redi2go.photonics.api.shaders.PhotonicsProperties;
 import at.redi2go.photonics.core.iris.pipeline.buffer.IBufferHolder;
@@ -17,6 +16,7 @@ import at.redi2go.photonics.core.rendering.world.bakery.texture.AtlasDownloader;
 import at.redi2go.photonics.core.rendering.world.compiler.ChunkCompiler;
 import at.redi2go.photonics.core.rendering.world.compiler.WorldCompiler;
 import at.redi2go.photonics.core.rendering.world.registry.WorldRegistry;
+import at.redi2go.photonics.core.rendering.world.registry.optimization.OptimizationService;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -50,14 +50,14 @@ public abstract class AbstractPhotonicsExtension implements PhotonicsExtension {
         var worldAllocator = registerComponent(new BufferWorldAllocator(1 << 29));
         var paletteTexture = registerComponent(new BufferPaletteTexture(2048, 600));
 
-        var worldRegistry = registerComponent(new WorldRegistry(worldAllocator, paletteTexture));
+        var optimizationService = registerComponent(new OptimizationService());
+        var worldRegistry = registerComponent(new WorldRegistry(worldAllocator, paletteTexture, atlasDownloader, optimizationService));
 
-        var builtSectionQueue = sectionManager.<ChunkCompiler.BuildResult>newTaskQueue(WorldCompiler.MAX_SECTIONS_PER_RUN << 1);
+        var builtSectionQueue = sectionManager.<ChunkCompiler.BuildResult>newTaskQueue(WorldCompiler.MAX_SECTIONS_PER_RUN << 1, true);
         var worldCompiler = registerComponent(new WorldCompiler(
                 ROOT_VOXEL_DEPTH,
                 worldAllocator,
                 paletteTexture,
-                sectionManager,
                 builtSectionQueue,
                 worldRegistry
         ));
@@ -65,7 +65,6 @@ public abstract class AbstractPhotonicsExtension implements PhotonicsExtension {
         registerComponent(new ChunkCompiler(
                 sectionManager,
                 builtSectionQueue,
-                atlasDownloader,
                 worldRegistry
         ));
 

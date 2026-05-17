@@ -208,10 +208,10 @@ bool reservoir_reuse(inout Reservoir reservoir, vec2 texel) {
 
 bool reservoir_reproject(inout Reservoir reservoir) {
     vec3 previous_player_pos;
-    vec2 uv = ph_reproject_player_pos(frag_player_pos, frag_is_hand, previous_player_pos).xy;
+    vec2 uv = ph_reproject_player_pos(frag_player_pos, frag_is_hand, get_taa_jitter(), previous_player_pos).xy;
 
     if (clamp(uv, 0, 1) != uv) return false;
-    vec2 prev_texel = uv * vec2(viewWidth, viewHeight);
+    vec2 prev_texel = uv * PH_VIEW_SIZE;
     ivec2 prev_itexel = ivec2(prev_texel);
 
     if (!frag_is_bad_angle) {
@@ -308,8 +308,9 @@ void sample_history_reproject(out SampleHistory smple) {
     vec2 center = (ph_reproject_player_pos(
         frag_player_pos,
         frag_is_hand,
+        get_taa_jitter(),
         previous_player_pos
-    ).xy * vec2(viewWidth, viewHeight)) - 0.5f;
+    ).xy * PH_VIEW_SIZE) - 0.5f;
 
     smple = sample_history_reproject_mixed(center, previous_player_pos);
 }

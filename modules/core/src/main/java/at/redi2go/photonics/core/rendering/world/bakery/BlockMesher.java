@@ -11,19 +11,22 @@ import org.joml.Vector3i;
 
 import java.util.Optional;
 
-public interface BlockMesher {
+public interface BlockMesher<T extends BlockMeshState> {
     Registry REGISTRY = new Registry();
 
     default void setup() {
 
     }
 
-    /**
-     * Meshes a block at {@code pos} with {@code blockState}.
-     *
-     * @apiNote {@code VertexBuilder} only accepts quads
-     */
+    T extractMeshState(
+            Vector3i blockChunkOffset,
+            IBlockPos pos,
+            IBlockState blockState,
+            IBlockAndTintGetter blockAndTintGetter
+    );
+
     void meshBlock(
+            T meshState,
             Vector3i blockChunkOffset,
             IBlockPos pos,
             IBlockState blockState,
@@ -36,9 +39,9 @@ public interface BlockMesher {
     }
 
     class Registry {
-        private final Object2ObjectMap<Id, BlockMesher> blockRegistry = new Object2ObjectOpenHashMap<>();
-        private final Object2ObjectMap<String, BlockMesher> namespaceRegistry = new Object2ObjectOpenHashMap<>();
-        private BlockMesher defaultMesher = null;
+        private final Object2ObjectMap<Id, BlockMesher<?>> blockRegistry = new Object2ObjectOpenHashMap<>();
+        private final Object2ObjectMap<String, BlockMesher<?>> namespaceRegistry = new Object2ObjectOpenHashMap<>();
+        private BlockMesher<?> defaultMesher = null;
 
         Registry() {
 
@@ -66,20 +69,20 @@ public interface BlockMesher {
                 defaultMesher.teardown();
         }
 
-        public void addBlock(Id id, BlockMesher mesher) {
+        public void addBlock(Id id, BlockMesher<?> mesher) {
             blockRegistry.putIfAbsent(id, mesher);
         }
 
-        public void addNamespace(String namespace, BlockMesher mesher) {
+        public void addNamespace(String namespace, BlockMesher<?> mesher) {
             namespaceRegistry.putIfAbsent(namespace, mesher);
         }
 
-        public void addDefault(BlockMesher mesher) {
+        public void addDefault(BlockMesher<?> mesher) {
             defaultMesher = mesher;
         }
 
-        public Optional<BlockMesher> get(IBlock block) {
-            return Optional.ofNullable(blockRegistry.get(block.id()))
+        public Optional<BlockMesher<?>> get(IBlock block) {
+            return Optional.<BlockMesher<?>>ofNullable(blockRegistry.get(block.id()))
                     .or(() -> Optional.ofNullable(namespaceRegistry.get(block.id().namespace())))
                     .or(() -> Optional.ofNullable(defaultMesher));
         }

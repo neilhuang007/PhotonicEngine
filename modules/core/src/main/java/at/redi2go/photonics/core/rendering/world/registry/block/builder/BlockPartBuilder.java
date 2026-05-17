@@ -8,17 +8,18 @@ import at.redi2go.photonics.core.rendering.world.block.TextureData;
 import at.redi2go.photonics.core.rendering.world.block.palette.BlockPalette;
 import at.redi2go.photonics.core.rendering.world.block.palette.MutablePaletteEntry;
 import at.redi2go.photonics.core.rendering.world.block.palette.PaletteBuilder;
-import at.redi2go.photonics.core.rendering.world.registry.WorldRegistry;
-import it.unimi.dsi.fastutil.ints.Int2IntMap;
-import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
 import org.joml.Vector3i;
 
 public class BlockPartBuilder implements VoxelConsumer {
+    private static final Vector3i VECTOR_ZERO = new Vector3i();
+    private static final Vector3i VECTOR_ONE = new Vector3i(1);
+    private static final Vector3i VECTOR_15 = new Vector3i(15);
+
     private final MutablePaletteEntry[] data;
 
     private final Vector3i temp = new Vector3i();
-    private final Vector3i minVoxel = new Vector3i();
-    private final Vector3i maxVoxel = new Vector3i();
+    private final Vector3i minVoxel = new Vector3i(Integer.MAX_VALUE);
+    private final Vector3i maxVoxel = new Vector3i(Integer.MIN_VALUE);
 
     public BlockPartBuilder() {
         this.data = new MutablePaletteEntry[RtVoxel.ENTRIES_SIZE];
@@ -86,7 +87,10 @@ public class BlockPartBuilder implements VoxelConsumer {
             voxelData[voxelIndex] = paletteEntry == null ? VoxelModel.makeAirEntry(voxelIndex) : VoxelEntry.toData(voxelEntry);
         }
 
-        Vector3i edgeLengths = maxVoxel.sub(minVoxel);
+        minVoxel.min(VECTOR_15);
+        maxVoxel.max(VECTOR_ZERO);
+
+        Vector3i edgeLengths = maxVoxel.sub(minVoxel).max(VECTOR_ONE);
         return new BuildResult(
                 hash,
                 edgeLengths.x * edgeLengths.y * edgeLengths.z,

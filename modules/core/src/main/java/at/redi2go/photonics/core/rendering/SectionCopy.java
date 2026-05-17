@@ -3,25 +3,27 @@ package at.redi2go.photonics.core.rendering;
 import at.redi2go.photonics.api.mc.core.IBlockPos;
 import at.redi2go.photonics.api.mc.world.level.IBlockState;
 import at.redi2go.photonics.api.mc.world.level.chunk.IChunkSection;
-import at.redi2go.photonics.core.model.VoxelModel;
 import org.apache.logging.log4j.util.TriConsumer;
 import org.joml.Vector3i;
 
-import java.util.function.BiConsumer;
-
-public class SectionCopy implements IChunkSection {
+public class SectionCopy implements PrioritizedTask, IChunkSection {
     private final Vector3i pos;
-    private final IBlockState[] blockStates;
+    private final IChunkSection copy;
+    private final long priority;
 
-    public SectionCopy(Vector3i pos, IChunkSection section) {
+    public SectionCopy(
+            Vector3i pos,
+            IChunkSection section,
+            long priority
+    ) {
         this.pos = pos;
-        this.blockStates = new IBlockState[IChunkSection.SECTION_SIZE];
+        this.copy = section.createCopy();
+        this.priority = priority;
+    }
 
-        Vector3i coord = new Vector3i();
-        for (int i = 0; i < IChunkSection.SECTION_SIZE; i++) {
-            VoxelModel.fromVoxelIndex(i, coord);
-            blockStates[i] = section.getBlockState(coord);
-        }
+    @Override
+    public long priority() {
+        return this.priority;
     }
 
     public Vector3i pos() {
@@ -34,12 +36,17 @@ public class SectionCopy implements IChunkSection {
 
     @Override
     public IBlockState getBlockState(int x, int y, int z) {
-        return blockStates[VoxelModel.toVoxelIndex(x, y, z)];
+        return copy.getBlockState(x, y, z);
     }
 
     @Override
     public boolean hasOnlyAir() {
         return false;
+    }
+
+    @Override
+    public IChunkSection createCopy() {
+        return this;
     }
 
     public void forEachBlock(TriConsumer<Vector3i, IBlockPos, IBlockState> blockConsumer) {
@@ -66,7 +73,7 @@ public class SectionCopy implements IChunkSection {
         final long[] hash = {0};
 
         forEachBlock((ignored, ignored1, block) ->
-                hash[0] = hash[0] * 31 + block.hashCode()
+                hash[0] = hash[0] * 31 + (block.hashCode() ^ block.block().hashCode())
         );
 
         return hash[0];

@@ -35,13 +35,12 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class WorldCompiler implements ChunkManager, Runnable, RenderingComponent {
-    public static final int MAX_SECTIONS_PER_RUN = 12;
+    public static final int MAX_SECTIONS_PER_RUN = 48;
 
     private static final int THREAD_POOL_SIZE = 3;
     private static final ExecutorService THREAD_POOL;
 
-    private final Queue<Vector3i> unloadQueue;
-    private final SectionManager.TaskQueue<ChunkCompiler.BuildResult> builtSectionQueue;
+    private final SectionManager.TaskQueue<ChunkCompiler.BuildResult> taskQueue;
 
     private final WorldAllocator worldAllocator;
     private final PaletteTexture paletteTexture;
@@ -74,15 +73,13 @@ public class WorldCompiler implements ChunkManager, Runnable, RenderingComponent
             int depth,
             WorldAllocator worldAllocator,
             PaletteTexture paletteTexture,
-            SectionManager sectionManager,
-            SectionManager.TaskQueue<ChunkCompiler.BuildResult> builtSectionQueue,
+            SectionManager.TaskQueue<ChunkCompiler.BuildResult> taskQueue,
             WorldRegistry worldRegistry
     ) {
         this.worldAllocator = worldAllocator;
         this.paletteTexture = paletteTexture;
 
-        this.unloadQueue = sectionManager.newUnloadQueue();
-        this.builtSectionQueue = builtSectionQueue;
+        this.taskQueue = taskQueue;
         this.registry = worldRegistry;
 
         this.uploadQueue = new ConcurrentLinkedQueue<>();
@@ -106,22 +103,32 @@ public class WorldCompiler implements ChunkManager, Runnable, RenderingComponent
     public void run() {
         try {
             while (!Thread.interrupted()) {
-                unloadSections();
-                rootVoxel.pruneEmptyVoxels();
+                taskQueue.awaitTask();
 
-                //TODO: FIX ME!
-                //registry.freeUnusedBlocks();
 
-                var sections = builtSectionQueue.drain(MAX_SECTIONS_PER_RUN);
-                recenter();
+                var unloadedSections = taskQueue.drainUnloadQueue();
+                if (!unloadedSections.isEmpty()) {
+                    clearUnloadedSections(unloadedSections);
+                }
 
-                clearPendingSections(sections);
 
-                insertSections(sections);
+                var builtSections = taskQueue.drain(MAX_SECTIONS_PER_RUN);
+                if (!builtSections.isEmpty()) {
+                    recenter();
 
-                stopUpload();
-                buildSections();
-                awaitUpload();
+                    clearPendingSections(builtSections);
+                    insertSections(builtSections);
+                }
+
+                if (!unloadedSections.isEmpty() || !builtSections.isEmpty()) {
+                    rootVoxel.pruneEmptyVoxels();
+
+                    stopUpload();
+                    buildSections();
+                    awaitUpload();
+
+                    registry.objectManager().freeUnusedObjects();
+                }
             }
         } catch (InterruptedException | IgnoredInterruptedException e) {
 
@@ -131,22 +138,14 @@ public class WorldCompiler implements ChunkManager, Runnable, RenderingComponent
 
     // Compiler Steps
 
-    private void unloadSections() {
+    private void clearUnloadedSections(List<Vector3i> unloadedSections) {
         if (iorigin == null) return;
 
-        while (!unloadQueue.isEmpty()) {
-            var sectionCoord = unloadQueue.remove();
-            Vector3i sectionVoxelPos = sectionCoord.mul(16, new Vector3i())
-                    .sub(iorigin)
-                    .mul(16);
+        ShortSet regions = new ShortOpenHashSet(unloadedSections.size());
+        for (var section : unloadedSections)
+            regions.add(toRegion(section));
 
-            rootVoxel.removeChunk(
-                    sectionVoxelPos.x,
-                    sectionVoxelPos.y,
-                    sectionVoxelPos.z,
-                    toRegion(sectionCoord)
-            );
-        }
+        rootVoxel.removeRegions(regions);
     }
 
     private void recenter() throws InterruptedException {
@@ -161,8 +160,11 @@ public class WorldCompiler implements ChunkManager, Runnable, RenderingComponent
         stopUpload();
 
         var chunks = new ArrayList<>(this.chunks);
-        for (var chunk : chunks)
+        for (var chunk : chunks) {
+            if (chunk == null) continue;
+
             rootVoxel.removeChunkUnsafe(chunk.x(), chunk.y(), chunk.z());
+        }
 
         var offset = iorigin.sub(newOrigin, new Vector3i());
         offset.x = offset.x << 4;
@@ -170,6 +172,8 @@ public class WorldCompiler implements ChunkManager, Runnable, RenderingComponent
         offset.z = offset.z << 4;
 
         for (var chunk : chunks) {
+            if (chunk == null) continue;
+
             int newX = chunk.x() + offset.x;
             int newY = chunk.y() + offset.y;
             int newZ = chunk.z() + offset.z;
@@ -188,8 +192,9 @@ public class WorldCompiler implements ChunkManager, Runnable, RenderingComponent
     }
 
     private void clearPendingSections(List<ChunkCompiler.BuildResult> sections) {
-        ShortSet regions = new ShortOpenHashSet();
-        for (var section : sections) regions.add(toRegion(section.chunkPos()));
+        ShortSet regions = new ShortOpenHashSet(sections.size());
+        for (var section : sections)
+            regions.add(toRegion(section.chunkPos()));
 
         rootVoxel.removeRegions(regions);
     }
@@ -199,38 +204,37 @@ public class WorldCompiler implements ChunkManager, Runnable, RenderingComponent
         Vector3i blockVoxelPos = new Vector3i();
 
         for (var section : sections) {
-            blockSorter.reset();
+            try (section) {
+                blockSorter.reset();
 
-            var chunkVoxelPos = new Vector3i(section.chunkBlockPos())
-                    .sub(iorigin)
-                    .mul(16);
+                var chunkVoxelPos = new Vector3i(section.chunkBlockPos())
+                        .sub(iorigin)
+                        .mul(16);
 
-            if (!rootVoxel.containsChunk(chunkVoxelPos)) {
-                section.discard();
-                continue;
+                if (!rootVoxel.containsChunk(chunkVoxelPos)) continue;
+
+                short region = toRegion(section.chunkPos());
+                section.forEachBlock((blockChunkPos, block) -> blockSorter.addBlock(
+                        chunkVoxelPos.add(blockChunkPos.mul(16), new Vector3i()),
+                        block
+                ));
+
+                blockSorter.forEachBlock((block -> {
+                    var parts = block.blockModel().parts();
+                    for (int i = 0; i < parts.size(); i++) {
+                        var part = parts.get(i);
+
+                        blockVoxelPos.set(block.x(), block.y(), block.z());
+                        blockVoxelPos.add(part.offset().mul(16, new Vector3i()));
+
+                        rootVoxel.insertBlock(
+                                blockVoxelPos.x, blockVoxelPos.y, blockVoxelPos.z,
+                                region,
+                                part.toEntry(region)
+                        );
+                    }
+                }));
             }
-
-            short region = toRegion(section.chunkPos());
-            section.forEachBlock((blockChunkPos, block) -> blockSorter.addBlock(
-                    chunkVoxelPos.add(blockChunkPos.mul(16), new Vector3i()),
-                    block
-            ));
-
-            blockSorter.forEachBlock((block -> {
-                var parts = block.blockModel().parts();
-                for (int i = 0; i < parts.size(); i++) {
-                    var part = parts.get(i);
-
-                    blockVoxelPos.set(block.x(), block.y(), block.z());
-                    blockVoxelPos.add(part.offset().mul(16, new Vector3i()));
-
-                    rootVoxel.insertBlock(
-                            blockVoxelPos.x, blockVoxelPos.y, blockVoxelPos.z,
-                            region,
-                            part.toEntry(region)
-                    );
-                }
-            }));
         }
     }
 
@@ -248,6 +252,8 @@ public class WorldCompiler implements ChunkManager, Runnable, RenderingComponent
         var temp = new Vector3i();
 
         for (var chunk : chunks) {
+            if (chunk == null) continue;
+
             temp.set(chunk.x(), chunk.y(), chunk.z());
             minVoxel.min(temp);
 

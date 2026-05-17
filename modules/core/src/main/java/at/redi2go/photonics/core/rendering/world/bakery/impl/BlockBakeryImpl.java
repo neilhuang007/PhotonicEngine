@@ -8,6 +8,7 @@ import at.redi2go.photonics.core.Photonics;
 import at.redi2go.photonics.core.rendering.world.bakery.BaryPos;
 import at.redi2go.photonics.core.rendering.world.bakery.BlockBakery;
 import at.redi2go.photonics.core.rendering.world.bakery.BlockBuilder;
+import at.redi2go.photonics.core.rendering.world.bakery.BlockMeshState;
 import at.redi2go.photonics.core.rendering.world.bakery.BlockMesher;
 import at.redi2go.photonics.core.rendering.world.bakery.Vertex;
 import at.redi2go.photonics.core.rendering.world.bakery.VoxelConsumer;
@@ -30,7 +31,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class BlockBakeryImpl implements BlockBakery {
     private static final Queue<int[]> MESH_ARRAYS = new ConcurrentLinkedQueue<>();
-    private static final int INITIAL_MESH_ARRAY_SIZE = 40;
+    private static final int INITIAL_MESH_ARRAY_SIZE = 1024;
 
     private final AtlasDownloader atlasDownloader;
 
@@ -46,30 +47,29 @@ public class BlockBakeryImpl implements BlockBakery {
     }
 
     @Override
-    public @Nullable MeshResult meshBlock(
+    public @Nullable <T extends BlockMeshState> MeshResult meshBlock(
+            BlockMesher<T> mesher,
+            T meshState,
             Vector3i blockChunkOffset,
             IBlockPos pos,
             IBlockState blockState,
             IBlockAndTintGetter blockAndTintGetter
     ) {
-        return BlockMesher.REGISTRY.get(blockState.block())
-                .map(mesher -> {
-                    var builder = new MeshResultImpl(pollMeshArray());
-                    mesher.meshBlock(
-                            blockChunkOffset,
-                            pos,
-                            blockState,
-                            blockAndTintGetter,
-                            builder
-                    );
+        var builder = new MeshResultImpl(pollMeshArray());
 
-                    return builder;
-                }).filter(mesher -> {
-                    if (mesher.vertexCount != 0) return true;
+        mesher.meshBlock(
+                meshState,
+                blockChunkOffset,
+                pos,
+                blockState,
+                blockAndTintGetter,
+                builder
+        );
 
-                    mesher.close();
-                    return false;
-                }).orElse(null);
+        if (builder.vertexCount == 0) {
+            builder.close();
+            return null;
+        } else return builder;
     }
 
     public class MeshResultImpl implements BlockBuilder, MeshResult {
@@ -82,10 +82,13 @@ public class BlockBakeryImpl implements BlockBakery {
 
         private int currentBlockId = -1;
         private CpuTexture currentTexture = null;
+        private long currentTextureHash = 0;
 
         private int vertexCount = 0;
         private long vertexHash = 0;
         private int vertexIndex = -1;
+
+        private boolean open = true;
 
         private final ArrayDeque<StateChange> stateChanges = new ArrayDeque<>();
 
@@ -166,6 +169,7 @@ public class BlockBakeryImpl implements BlockBakery {
             if (currentTexture == texture) return this;
 
             currentTexture = texture;
+            currentTextureHash = texture.hashCode();
             submitState(new TextureChange(texture));
 
             return this;
@@ -196,12 +200,14 @@ public class BlockBakeryImpl implements BlockBakery {
 
             long hash = vertexHash;
 
-            hash = hash * 31 + intAt(vertexIndex);
-            hash = hash * 31 + intAt(vertexIndex + 1);
-            hash = hash * 31 + intAt(vertexIndex + 2);
+            hash = hash * 31 + currentTextureHash;
 
-            hash = hash * 31 + intAt(vertexIndex + 4);
-            hash = hash * 31 + intAt(vertexIndex + 5);
+            hash = hash * 31 + intAt(index);
+            hash = hash * 31 + intAt(index + 1);
+            hash = hash * 31 + intAt(index + 2);
+
+            hash = hash * 31 + intAt(index + 4);
+            hash = hash * 31 + intAt(index + 5);
 
             vertexHash = hash;
         }
@@ -264,7 +270,7 @@ public class BlockBakeryImpl implements BlockBakery {
 
             while (index < end) {
                 tintBuilder.add(intAt(index));
-                index+= 6;
+                index += 6;
             }
 
             return tintBuilder.build();
@@ -379,14 +385,17 @@ public class BlockBakeryImpl implements BlockBakery {
             }
         }
 
-        private void checkInterrupted() throws InterruptedException{
+        private void checkInterrupted() throws InterruptedException {
             if (Thread.interrupted())
                 throw new InterruptedException();
         }
 
         @Override
         public void close() {
-            MESH_ARRAYS.add(meshData);
+            if (open) {
+                MESH_ARRAYS.add(meshData);
+                open = false;
+            }
         }
 
         private static abstract class StateChange {
