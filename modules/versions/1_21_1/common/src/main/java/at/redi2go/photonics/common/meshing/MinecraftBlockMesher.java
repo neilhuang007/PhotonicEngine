@@ -8,6 +8,7 @@ import at.redi2go.photonics.api.mc.world.level.IBlockState;
 import at.redi2go.photonics.common.BlockRenderDispatcherExt;
 import at.redi2go.photonics.common.iris.IrisUtil;
 import at.redi2go.photonics.core.rendering.world.bakery.BlockBuilder;
+import at.redi2go.photonics.core.rendering.world.bakery.BlockMeshState;
 import at.redi2go.photonics.core.rendering.world.bakery.BlockMesher;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
@@ -34,11 +35,22 @@ import org.joml.Vector3i;
 
 import java.util.Set;
 
-public class MinecraftBlockMesher implements BlockMesher {
+public class MinecraftBlockMesher implements BlockMesher<MinecraftBlockMesher.NoCacheMeshState> {
     private static final ThreadLocal<Renderer> RENDERERS = ThreadLocal.withInitial(Renderer::new);
 
     @Override
+    public NoCacheMeshState extractMeshState(
+            Vector3i blockChunkOffset,
+            IBlockPos pos,
+            IBlockState blockState,
+            IBlockAndTintGetter blockAndTintGetter
+    ) {
+        return NoCacheMeshState.INSTANCE;
+    }
+
+    @Override
     public void meshBlock(
+            NoCacheMeshState meshState,
             Vector3i blockChunkOffset,
             IBlockPos pos,
             IBlockState blockState,
@@ -52,6 +64,20 @@ public class MinecraftBlockMesher implements BlockMesher {
                 (BlockAndTintGetter) blockAndTintGetter,
                 blockBuilder
         );
+    }
+
+    static final class NoCacheMeshState implements BlockMeshState {
+        static final NoCacheMeshState INSTANCE = new NoCacheMeshState();
+
+        private NoCacheMeshState() {}
+
+        @Override
+        public boolean shouldCache() {
+            return false;
+        }
+
+        @Override
+        public void prepareCacheUse() {}
     }
 
     private void meshBlock(
