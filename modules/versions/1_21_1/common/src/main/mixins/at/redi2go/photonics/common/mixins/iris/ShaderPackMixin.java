@@ -72,7 +72,7 @@ public abstract class ShaderPackMixin implements IShaderPack {
                     changedConfigs.getOrDefault("PHOTONICS_ENABLED", "true")
             );
 
-        ShaderPropertiesBridge.set(phProperties);
+        ShaderPropertiesBridge.set(phProperties, changedConfigs);
     }
 
     @Override

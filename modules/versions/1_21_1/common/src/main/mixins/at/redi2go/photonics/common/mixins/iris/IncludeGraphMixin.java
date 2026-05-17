@@ -51,7 +51,7 @@ public abstract class IncludeGraphMixin {
         this.patcher = PatcherBridge.consume();
 
         if (this.patcher == null) {
-            LOGGER.warn("PatcherBridge returned null for this IncludeGraph construction — no Photonics patcher available; skipping patcher-dependent include injection");
+            LOGGER.warn("PatcherBridge returned null for this IncludeGraph construction; skipping patcher-dependent include injection");
             return;
         }
 

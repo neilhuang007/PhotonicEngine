@@ -37,11 +37,7 @@ public class PhotonicsClientFabric implements ClientModInitializer {
             throw e;
         }
 
-        // Force Ph_GlGpuDevice (and its dependency GlDsaCompat) to initialize on the render
-        // thread, before any worker thread can trigger their static initializers.  GlDsaCompat's
-        // <clinit> calls GL.getCapabilities(), which throws if no GL context is current.
-        // Minecraft.getInstance() is non-null by the time onInitializeClient() is called, and
-        // execute() queues the runnable to run on the render thread at the next opportunity.
+        // Create the 1.21.1 GPU device after Minecraft has a current GL context.
         Minecraft.getInstance().execute(Ph_GlGpuDevice::init);
     }
 }

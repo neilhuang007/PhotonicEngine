@@ -5,7 +5,7 @@ import at.redi2go.photonics.api.gpu.buffers.IGpuBuffer;
 import at.redi2go.photonics.api.gpu.buffers.heap.IGpuBufferHeap;
 import at.redi2go.photonics.core.iris.pipeline.buffer.IBufferHolder;
 import at.redi2go.photonics.impl.mc.blaze3d.opengl.buffer.GlBufferHeap;
-import at.redi2go.photonics.impl.mc.blaze3d.opengl.buffer.Ph_GlGpuBuffer;
+import at.redi2go.photonics.impl.mc.blaze3d.opengl.buffer.GlGpuBuffer;
 import it.unimi.dsi.fastutil.Pair;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
@@ -82,21 +82,21 @@ public class GlBufferHolder implements IBufferHolder {
     }
 
     private static void bindBuffer(int program, IGpuBuffer buffer, int blockIndex, int bindingPointIndex) {
-        // 1.21.1 has no GlBufferAccessor mixin; use Ph_GlGpuBuffer.handle() directly instead.
-        // Guard against non-Ph_GlGpuBuffer instances supplied via addDefaultBuffer(name, supplier)
+        // 1.21.1 has no GlBufferAccessor mixin; use GlGpuBuffer.handle() directly instead.
+        // Guard against non-GlGpuBuffer instances supplied via addDefaultBuffer(name, supplier)
         // (e.g. Mojang-wrapped or Iris-provided IGpuBuffer implementations): rather than
         // ClassCastException on the render thread, log a one-shot WARN and skip the bind.
-        if (!(buffer instanceof Ph_GlGpuBuffer phBuffer)) {
+        if (!(buffer instanceof GlGpuBuffer glBuffer)) {
             String className = buffer.getClass().getName();
             if (warnedBufferClasses.add(className)) {
-                LOGGER.warn("GlBufferHolder: cannot bind buffer of type {} — expected Ph_GlGpuBuffer."
+                LOGGER.warn("GlBufferHolder: cannot bind buffer of type {} — expected GlGpuBuffer."
                         + " This buffer will be skipped. Check the IGpuBuffer supplier registered"
                         + " via addDefaultBuffer().", className);
             }
             return;
         }
 
-        int handle = phBuffer.handle();
+        int handle = glBuffer.handle();
 
         if ((buffer.usage() & BufferUsage.UNIFORM) == 0) {
             GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, bindingPointIndex, handle);

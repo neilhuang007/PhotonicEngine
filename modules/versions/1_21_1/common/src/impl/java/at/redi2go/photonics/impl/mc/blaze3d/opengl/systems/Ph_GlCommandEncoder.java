@@ -6,9 +6,8 @@ import at.redi2go.photonics.api.gpu.systems.ICommandEncoder;
 import at.redi2go.photonics.api.gpu.textures.IGpuTexture;
 import at.redi2go.photonics.api.gpu.textures.IGpuTexture2D;
 import at.redi2go.photonics.api.gpu.textures.IGpuTexture3D;
-import at.redi2go.photonics.impl.mc.blaze3d.opengl.GlDsaCompat;
-import at.redi2go.photonics.impl.mc.blaze3d.opengl.buffer.Ph_GlGpuBuffer;
-import at.redi2go.photonics.impl.mc.blaze3d.opengl.buffer.Ph_GlGpuBufferSlice;
+import at.redi2go.photonics.impl.mc.blaze3d.opengl.buffer.GlGpuBuffer;
+import at.redi2go.photonics.impl.mc.blaze3d.opengl.buffer.GlGpuBufferSlice;
 import at.redi2go.photonics.impl.mc.blaze3d.opengl.textures.IGlTexture;
 import net.irisshaders.iris.gl.texture.InternalTextureFormat;
 import org.joml.Vector2ic;
@@ -21,6 +20,7 @@ import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL12C;
 import org.lwjgl.opengl.GL30C;
 import org.lwjgl.opengl.GL44C;
+import org.lwjgl.opengl.GL45C;
 import org.lwjgl.opengl.GLCapabilities;
 
 import java.nio.ByteBuffer;
@@ -28,8 +28,7 @@ import java.nio.FloatBuffer;
 
 // Standalone command encoder for the 1.21.1 port. The 1.21.11 module instead
 // installs an @Implements mixin onto Mojang's blaze3d GlCommandEncoder; that
-// class doesn't exist on 1.21.1 so we own the operations directly. Buffer ops
-// route through GlDsaCompat; writeToTexture uses glTexSubImage2D/3D directly.
+// class doesn't exist on 1.21.1 so we own the operations directly.
 public final class Ph_GlCommandEncoder implements ICommandEncoder {
     @Override
     public void clearColorTexture(IGpuTexture<?> gpuTexture, Vector4fc clearColor) {
@@ -175,44 +174,44 @@ public final class Ph_GlCommandEncoder implements ICommandEncoder {
 
     @Override
     public void writeToBuffer(IGpuBuffer buffer, ByteBuffer byteBuffer) {
-        Ph_GlGpuBuffer target = (Ph_GlGpuBuffer) buffer;
-        GlDsaCompat.namedBufferSubData(target.handle(), 0L, byteBuffer);
+        GlGpuBuffer target = (GlGpuBuffer) buffer;
+        GL45C.glNamedBufferSubData(target.handle(), 0L, byteBuffer);
     }
 
     @Override
     public void writeToBuffer(IGpuBufferSlice slice, ByteBuffer byteBuffer) {
-        Ph_GlGpuBufferSlice target = (Ph_GlGpuBufferSlice) slice;
-        Ph_GlGpuBuffer parent = (Ph_GlGpuBuffer) target.buffer();
-        GlDsaCompat.namedBufferSubData(parent.handle(), target.offset(), byteBuffer);
+        GlGpuBufferSlice target = (GlGpuBufferSlice) slice;
+        GlGpuBuffer parent = (GlGpuBuffer) target.buffer();
+        GL45C.glNamedBufferSubData(parent.handle(), target.offset(), byteBuffer);
     }
 
     @Override
     public IGpuBuffer.MappedView mapBuffer(IGpuBuffer buffer, boolean readable, boolean writeable) {
-        Ph_GlGpuBuffer target = (Ph_GlGpuBuffer) buffer;
+        GlGpuBuffer target = (GlGpuBuffer) buffer;
         return target.mapRange(0L, target.size(), readable, writeable);
     }
 
     @Override
     public IGpuBuffer.MappedView mapBuffer(IGpuBufferSlice bufferSlice, boolean readable, boolean writeable) {
-        Ph_GlGpuBufferSlice target = (Ph_GlGpuBufferSlice) bufferSlice;
-        Ph_GlGpuBuffer parent = (Ph_GlGpuBuffer) target.buffer();
+        GlGpuBufferSlice target = (GlGpuBufferSlice) bufferSlice;
+        GlGpuBuffer parent = (GlGpuBuffer) target.buffer();
         return parent.mapRange(target.offset(), target.length(), readable, writeable);
     }
 
     @Override
     public void copyToBuffer(IGpuBufferSlice src, IGpuBufferSlice dst) {
-        Ph_GlGpuBufferSlice srcSlice = (Ph_GlGpuBufferSlice) src;
-        Ph_GlGpuBufferSlice dstSlice = (Ph_GlGpuBufferSlice) dst;
+        GlGpuBufferSlice srcSlice = (GlGpuBufferSlice) src;
+        GlGpuBufferSlice dstSlice = (GlGpuBufferSlice) dst;
 
         if (srcSlice.length() != dstSlice.length()) {
             throw new IllegalArgumentException(
                     "copyToBuffer slice lengths differ: src=" + srcSlice.length() + " dst=" + dstSlice.length());
         }
 
-        Ph_GlGpuBuffer srcBuffer = (Ph_GlGpuBuffer) srcSlice.buffer();
-        Ph_GlGpuBuffer dstBuffer = (Ph_GlGpuBuffer) dstSlice.buffer();
+        GlGpuBuffer srcBuffer = (GlGpuBuffer) srcSlice.buffer();
+        GlGpuBuffer dstBuffer = (GlGpuBuffer) dstSlice.buffer();
 
-        GlDsaCompat.copyNamedBufferSubData(
+        GL45C.glCopyNamedBufferSubData(
                 srcBuffer.handle(),
                 dstBuffer.handle(),
                 srcSlice.offset(),

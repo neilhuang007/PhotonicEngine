@@ -16,6 +16,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
+import java.util.Map;
 import java.util.function.Consumer;
 
 import static at.redi2go.photonics.api.shaders.PhotonicsProperties.ALPHA_MODE_KEY;
@@ -49,13 +50,16 @@ public abstract class ShaderPropertiesMixin {
      * silently ignored).
      */
     @Unique private PhotonicsPropertiesImpl phProperties;
+    @Unique private Map<String, String> phChangedConfigs = Map.of();
     @Unique private boolean phPropertiesInitialized;
 
     @Unique
     private void photonics$ensurePropertiesConsumed() {
         if (phPropertiesInitialized) return;
         phPropertiesInitialized = true;
-        phProperties = ShaderPropertiesBridge.consume();
+        var context = ShaderPropertiesBridge.consumeContext();
+        phProperties = context == null ? null : context.properties();
+        phChangedConfigs = context == null ? Map.of() : context.changedConfigs();
         if (phProperties == null) {
             LOGGER.warn("ShaderPropertiesBridge returned null — no Photonics properties available for this ShaderProperties instance; Photonics-specific shader keys will be ignored");
         }
@@ -89,29 +93,69 @@ public abstract class ShaderPropertiesMixin {
             return;
         }
 
-        handleBooleanDirective(key, value, ENABLED_KEY, e -> phProperties.enabled = e);
-        handleFloatDirective(key, value, RENDER_SCALE_KEY, e -> phProperties.renderScale = e);
+        handleBooleanDirective(key, resolveOptionValue(value), ENABLED_KEY, e -> phProperties.enabled = e);
+        handleFloatDirective(key, resolveOptionValue(value), RENDER_SCALE_KEY, e -> phProperties.renderScale = e);
 
-        handleNonZeroDirective(key, value, MAX_LIGHTS_KEY, e -> phProperties.maxLights = e);
-        handleAlphaModeDirective(key, value, ALPHA_MODE_KEY, e -> phProperties.alphaMode = e);
-        handleFloatDirective(key, value, ENCHANTMENT_GLINT_STRENGTH_KEY, e -> phProperties.enchantmentGlintStrength = e);
-        handleBooleanDirective(key, value, SEPARATE_HANDHELD_RAYS_KEY, e -> phProperties.useSeparateHandheldRays = e);
-        handleBooleanDirective(key, value, IS_GI_ENABLED_KEY, e -> phProperties.giEnabled = e);
-        handleBooleanDirective(key, value, IS_BLOCK_LIGHT_ENABLED_KEY, e -> phProperties.blockLightEnabled = e);
-        handleBooleanDirective(key, value, IS_HANDHELD_LIGHT_ENABLED_KEY, e -> phProperties.handheldLightEnabled = e);
-        handleBooleanDirective(key, value, IS_LIGHT_BINNING_ENABLED_KEY, e -> phProperties.lightBinningEnabled = e);
+        handleNonZeroDirective(key, resolveOptionValue(value), MAX_LIGHTS_KEY, e -> phProperties.maxLights = e);
+        handleAlphaModeDirective(key, resolveOptionValue(value), ALPHA_MODE_KEY, e -> phProperties.alphaMode = e);
+        handleFloatDirective(key, resolveOptionValue(value), ENCHANTMENT_GLINT_STRENGTH_KEY, e -> phProperties.enchantmentGlintStrength = e);
+        handleBooleanDirective(key, resolveOptionValue(value), SEPARATE_HANDHELD_RAYS_KEY, e -> phProperties.useSeparateHandheldRays = e);
+        handleBooleanDirective(key, resolveOptionValue(value), IS_GI_ENABLED_KEY, e -> phProperties.giEnabled = e);
+        handleBooleanDirective(key, resolveOptionValue(value), IS_BLOCK_LIGHT_ENABLED_KEY, e -> phProperties.blockLightEnabled = e);
+        handleBooleanDirective(key, resolveOptionValue(value), IS_HANDHELD_LIGHT_ENABLED_KEY, e -> phProperties.handheldLightEnabled = e);
+        if (!LIGHTING_MODE_KEY.equals(IS_LIGHT_BINNING_ENABLED_KEY))
+            handleBooleanDirective(key, resolveOptionValue(value), IS_LIGHT_BINNING_ENABLED_KEY, e -> phProperties.lightBinningEnabled = e);
 
-        handleLightingModeDirective(key, value, LIGHTING_MODE_KEY, e -> phProperties.lightingMode = e);
+        handleLightingModeDirective(key, resolveOptionValue(value), LIGHTING_MODE_KEY, e -> phProperties.lightingMode = e);
 
-        handleNonZeroDirective(key, value, MAX_SAMPLES_KEY, e -> phProperties.maxSamples = e);
+        handleNonZeroDirective(key, resolveOptionValue(value), MAX_SAMPLES_KEY, e -> phProperties.maxSamples = e);
 
-        handleNonZeroDirective(key, value, RESTIR_INITIAL_SAMPLES_KEY, e -> phProperties.restirInitialSamples = e);
-        handleNonZeroDirective(key, value, RESTIR_SPATIAL_REUSE_SAMPLES_KEY, e -> phProperties.restirSpatialReuseSamples = e);
-        handleFloatDirective(key, value, RESTIR_SPATIAL_REUSE_RADIUS_KEY, e -> phProperties.restirRestirSpatialReuseRadius = e);
-        handleNonZeroDirective(key, value, RESTIR_ACCUMULATION_FRAMES_KEY, e -> phProperties.restirAccumulationFrames = e);
-        handleUnsignedIntDirective(key, value, RESTIR_DENOISER_PASSES_KEY, e -> phProperties.restirDenoiserPasses = e);
-        handleBooleanDirective(key, value, RESTIR_SOFT_SHADOWS_KEY, e -> phProperties.restirSoftShadows = e);
-        handleBooleanDirective(key, value, RESTIR_COMBINED_GI_KEY, e -> phProperties.restirCombinedGi = e);
+        handleNonZeroDirective(key, resolveOptionValue(value), RESTIR_INITIAL_SAMPLES_KEY, e -> phProperties.restirInitialSamples = e);
+        handleNonZeroDirective(key, resolveOptionValue(value), RESTIR_SPATIAL_REUSE_SAMPLES_KEY, e -> phProperties.restirSpatialReuseSamples = e);
+        handleFloatDirective(key, resolveOptionValue(value), RESTIR_SPATIAL_REUSE_RADIUS_KEY, e -> phProperties.restirRestirSpatialReuseRadius = e);
+        handleNonZeroDirective(key, resolveOptionValue(value), RESTIR_ACCUMULATION_FRAMES_KEY, e -> phProperties.restirAccumulationFrames = e);
+        handleUnsignedIntDirective(key, resolveOptionValue(value), RESTIR_DENOISER_PASSES_KEY, e -> phProperties.restirDenoiserPasses = e);
+        handleBooleanDirective(key, resolveOptionValue(value), RESTIR_SOFT_SHADOWS_KEY, e -> phProperties.restirSoftShadows = e);
+        handleBooleanDirective(key, resolveOptionValue(value), RESTIR_COMBINED_GI_KEY, e -> phProperties.restirCombinedGi = e);
+    }
+
+    @Unique
+    private String resolveOptionValue(String value) {
+        if (value == null) return null;
+
+        String resolved = phChangedConfigs.getOrDefault(value, switch (value) {
+            case "PHOTONICS_ENABLED" -> "true";
+            case "PHOTONICS_LIGHTING_MODE" -> "BASIC";
+            case "LIGHTING_MODE" -> "BASIC";
+            case "PHOTONICS_ALPHA_MODE" -> "BLOCK";
+            case "ALPHA_MODE" -> "NONE";
+            case "PHOTONICS_MAX_LIGHTS" -> "1000";
+            case "MAX_LIGHTS" -> "1000";
+            case "PHOTONICS_GLINT_STRENGTH" -> "0.2";
+            case "ENCHANTMENT_GLINT_STRENGTH" -> "0.2";
+            case "PHOTONICS_TWO_HANDHELD_RAYS" -> "true";
+            case "SEPARATE_HANDHELD_RAYS" -> "false";
+            case "PHOTONICS_SHARP_MAX_SAMPLES" -> "20";
+            case "MAX_SAMPLES" -> "20";
+            case "PHOTONICS_RESTIR_INITIAL_SAMPLES" -> "32";
+            case "RESTIR_INITIAL_SAMPLES" -> "32";
+            case "PHOTONICS_RESTIR_SPR_SAMPLES" -> "5";
+            case "RESTIR_SPATIAL_REUSE_SAMPLES" -> "5";
+            case "PHOTONICS_RESTIR_SPR_RADIUS" -> "10";
+            case "RESTIR_SPATIAL_REUSE_RADIUS" -> "10";
+            case "PHOTONICS_RESTIR_ACCUMULATION" -> "32";
+            case "RESTIR_ACCUMULATION_FRAMES" -> "32";
+            case "PHOTONICS_RESTIR_DENOISER_PASSES" -> "5";
+            case "RESTIR_DENOISER_PASSES" -> "5";
+            case "PHOTONICS_RESTIR_SOFT_SHADOWS" -> "true";
+            case "RESTIR_SOFT_SHADOWS" -> "true";
+            case "PHOTONICS_RESTIR_COMBINED_GI" -> "false";
+            case "RESTIR_COMBINED_GI" -> "false";
+            case "TAAU_RENDER_SCALE" -> "0.75";
+            default -> value;
+        });
+
+        return "SIMPLE".equals(resolved) ? "BASIC" : resolved;
     }
 
     @Unique

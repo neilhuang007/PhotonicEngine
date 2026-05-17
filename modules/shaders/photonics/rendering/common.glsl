@@ -13,6 +13,34 @@ uniform vec3 previousCameraPosition;
 uniform mat4 gbufferPreviousModelView;
 uniform mat4 gbufferPreviousProjection;
 
+vec2 get_taa_jitter() {
+#ifdef TAA
+    vec2 view = 1.0 / vec2(viewWidth, viewHeight);
+
+    #if TAA_MODE == 0
+    vec2 jitterOffsets8[8] = vec2[8](
+        vec2( 0.125, -0.375),
+        vec2(-0.125,  0.375),
+        vec2( 0.625,  0.125),
+        vec2( 0.375, -0.625),
+        vec2(-0.625,  0.625),
+        vec2(-0.875, -0.125),
+        vec2( 0.375, -0.875),
+        vec2( 0.875,  0.875)
+    );
+    return jitterOffsets8[int(frameCounter & 7)] * view;
+    #else
+    vec2 jitterOffsets2[2] = vec2[2](
+        vec2(1.0, 0.0),
+        vec2(0.0, 1.0)
+    );
+    return jitterOffsets2[int(frameCounter & 1)] * view;
+    #endif
+#endif
+
+    return vec2(0.0);
+}
+
 ivec2 frag_tex_coord = ivec2(0);
 uint frag_rnd_state = 0;
 

@@ -2,6 +2,8 @@ package at.redi2go.photonics.common.iris;
 
 import at.redi2go.photonics.common.PhotonicsPropertiesImpl;
 
+import java.util.Map;
+
 /**
  * Used to pass the {@link PhotonicsPropertiesImpl} to the constructor of
  * {@link net.irisshaders.iris.shaderpack.properties.ShaderProperties}.
@@ -15,10 +17,14 @@ import at.redi2go.photonics.common.PhotonicsPropertiesImpl;
  * thread.  Callers must handle {@code null} as a degraded-mode signal rather than throwing.</p>
  */
 public class ShaderPropertiesBridge {
-    private static final ThreadLocal<PhotonicsPropertiesImpl> PROPERTIES = new ThreadLocal<>();
+    private static final ThreadLocal<Context> CONTEXT = new ThreadLocal<>();
 
     public static void set(PhotonicsPropertiesImpl properties) {
-        PROPERTIES.set(properties);
+        set(properties, Map.of());
+    }
+
+    public static void set(PhotonicsPropertiesImpl properties, Map<String, String> changedConfigs) {
+        CONTEXT.set(new Context(properties, Map.copyOf(changedConfigs)));
     }
 
     /**
@@ -28,8 +34,19 @@ public class ShaderPropertiesBridge {
      * @return the properties object, or {@code null} if none was set on this thread
      */
     public static PhotonicsPropertiesImpl consume() {
-        PhotonicsPropertiesImpl result = PROPERTIES.get();
-        PROPERTIES.remove();
+        Context context = consumeContext();
+        return context == null ? null : context.properties();
+    }
+
+    public static Context consumeContext() {
+        Context result = CONTEXT.get();
+        CONTEXT.remove();
         return result;
+    }
+
+    public record Context(
+            PhotonicsPropertiesImpl properties,
+            Map<String, String> changedConfigs
+    ) {
     }
 }

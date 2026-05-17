@@ -3,10 +3,9 @@ package at.redi2go.photonics.impl.mc.blaze3d.opengl.textures;
 import at.redi2go.photonics.api.Disposable;
 import at.redi2go.photonics.api.gpu.textures.ITextureFormat;
 import at.redi2go.photonics.api.gpu.textures.TextureUsage;
+import at.redi2go.photonics.impl.mc.blaze3d.opengl.GlDebugLabels;
 import com.mojang.blaze3d.platform.GlStateManager;
 import org.jetbrains.annotations.Nullable;
-import org.lwjgl.opengl.GL11C;
-import org.lwjgl.opengl.KHRDebug;
 
 import java.util.function.Supplier;
 
@@ -56,11 +55,7 @@ public abstract class Ph_AbstractGlTexture<D> implements Disposable, IGlTexture 
     protected abstract D divideForMip(D size, int mipLevel);
 
     private void applyDebugLabel() {
-        try {
-            KHRDebug.glObjectLabel(GL11C.GL_TEXTURE, handle, this.label);
-        } catch (Exception ignored) {
-            // KHR_debug is optional; silently skip if extension is absent
-        }
+        GlDebugLabels.labelTexture(handle, label);
     }
 
     @Override

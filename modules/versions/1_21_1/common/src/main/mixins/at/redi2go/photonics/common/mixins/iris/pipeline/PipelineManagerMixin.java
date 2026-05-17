@@ -2,12 +2,12 @@ package at.redi2go.photonics.common.mixins.iris.pipeline;
 
 import at.redi2go.photonics.api.shaders.IShaderPack;
 import at.redi2go.photonics.common.AtlasDownloaderImpl;
-import at.redi2go.photonics.common.meshing.MinecraftBlockMesher;
 import at.redi2go.photonics.common.iris.pipeline.IrisPipelineFactoryImpl;
 import at.redi2go.photonics.common.iris.pipeline.IrisRenderingPipelineExt;
 import at.redi2go.photonics.common.iris.pipeline.PipelineManagerExt;
 import at.redi2go.photonics.common.iris.pipeline.renderer.IrisRendererImpl;
 import at.redi2go.photonics.common.iris.pipeline.renderer.PhotonicsRenderer;
+import at.redi2go.photonics.common.meshing.MinecraftBlockMesher;
 import at.redi2go.photonics.core.iris.PhotonicsExtension;
 import at.redi2go.photonics.core.rendering.world.bakery.BlockMesher;
 import net.irisshaders.iris.Iris;
@@ -32,7 +32,6 @@ import java.util.Optional;
 public abstract class PipelineManagerMixin implements PipelineManagerExt {
     @Shadow
     private WorldRenderingPipeline pipeline;
-
     @Unique
     private PhotonicsExtension photonics;
 

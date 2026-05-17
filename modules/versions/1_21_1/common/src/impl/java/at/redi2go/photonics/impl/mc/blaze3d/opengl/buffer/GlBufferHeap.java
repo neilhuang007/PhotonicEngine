@@ -6,8 +6,8 @@ import at.redi2go.photonics.api.gpu.buffers.heap.AbstractGpuBufferHeap;
 import at.redi2go.photonics.api.gpu.buffers.heap.IGpuBufferHeap;
 import at.redi2go.photonics.api.gpu.buffers.heap.MemoryView;
 import at.redi2go.photonics.api.gpu.systems.IGpuDevice;
-import at.redi2go.photonics.impl.mc.blaze3d.opengl.GlDsaCompat;
 import org.jetbrains.annotations.Nullable;
+import org.lwjgl.opengl.GL45C;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -19,13 +19,6 @@ import static org.lwjgl.opengl.GL30C.GL_MAP_INVALIDATE_RANGE_BIT;
 import static org.lwjgl.opengl.GL30C.GL_MAP_WRITE_BIT;
 
 public class GlBufferHeap extends AbstractGpuBufferHeap {
-    /**
-     * Sentinel flag passed to createBuffer so callers can opt out of persistent mapping.
-     * Ph_GlGpuBuffer never enables persistent mapping, so this flag is a no-op here;
-     * it exists purely for ABI parity with the 1.21.11 module.
-     */
-    public static final int NO_PERSISTENCE_MAPPING = 1 << 20;
-
     private final IGpuBuffer gpuBuffer;
     private final ByteBuffer buffer;
 
@@ -39,12 +32,12 @@ public class GlBufferHeap extends AbstractGpuBufferHeap {
             long byteSize,
             @BufferUsage int usage
     ) {
-        this.gpuBuffer = device.createBuffer(label, byteSize, usage | BufferUsage.MAP_WRITE | NO_PERSISTENCE_MAPPING);
+        this.gpuBuffer = device.createBuffer(label, byteSize, usage | BufferUsage.MAP_WRITE);
         this.buffer = ByteBuffer.allocateDirect(Math.toIntExact(byteSize))
                 .order(ByteOrder.nativeOrder());
 
         // 1.21.1 has no GlBuffer/GpuBuffer from Blaze3D — cast to our own type instead.
-        this.handle = ((Ph_GlGpuBuffer) gpuBuffer).handle();
+        this.handle = ((GlGpuBuffer) gpuBuffer).handle();
     }
 
     public IGpuBuffer buffer() {
@@ -80,23 +73,19 @@ public class GlBufferHeap extends AbstractGpuBufferHeap {
             int offset = (int) region.begin();
             int length = (int) region.end() - offset;
 
-            var slice = GlDsaCompat.mapNamedBufferRange(handle, offset, length, GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT);
-            // glMapNamedBufferRange can return null on legacy GL3.x drivers where GlDsaCompat
-            // falls back to glBufferData (immutable-storage semantics are unavailable).
-            // NPE from requireNonNull would hide the root cause; throw a diagnostic ISE instead.
+            var slice = GL45C.glMapNamedBufferRange(handle, offset, length, GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT);
             if (slice == null) {
                 throw new IllegalStateException(
                         "glMapNamedBufferRange returned null for buffer handle=" + handle
                                 + " offset=" + offset
                                 + " length=" + length
-                                + " flags=0x" + Integer.toHexString(GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT)
-                                + " — driver may not support persistent/immutable buffer mapping on this GL version");
+                                + " flags=0x" + Integer.toHexString(GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT));
             }
 
             try {
                 slice.put(0, buffer, offset, length);
             } finally {
-                GlDsaCompat.unmapNamedBuffer(handle);
+                GL45C.glUnmapNamedBuffer(handle);
             }
         }
     }
