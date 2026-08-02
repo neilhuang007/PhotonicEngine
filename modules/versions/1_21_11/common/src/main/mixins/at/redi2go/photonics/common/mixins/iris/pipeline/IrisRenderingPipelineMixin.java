@@ -30,6 +30,7 @@ import net.irisshaders.iris.targets.RenderTargets;
 import net.irisshaders.iris.uniforms.FrameUpdateNotifier;
 import net.irisshaders.iris.uniforms.custom.CustomUniforms;
 import org.jetbrains.annotations.Nullable;
+import org.joml.Vector2f;
 import org.joml.Vector3i;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -135,6 +136,20 @@ public abstract class IrisRenderingPipelineMixin implements IrisRenderingPipelin
                             computePass.workGroupsX(),
                             computePass.workGroupsY(),
                             computePass.workGroupsZ()
+                    ));
+
+                    compositeSources[i] = null;
+                    computeSources[i] = new ComputeSource[]{computeSource};
+                } else if (pass instanceof DeferredIrisRenderer.RelativeComputePass computePass) {
+                    var computeSource = new ComputeSource(
+                            computePass.name(),
+                            readSource(computePass.computeShader()),
+                            programSet,
+                            ShaderProperties.empty()
+                    );
+                    computeSource.setWorkGroupRelative(new Vector2f(
+                            computePass.widthScale(),
+                            computePass.heightScale()
                     ));
 
                     compositeSources[i] = null;

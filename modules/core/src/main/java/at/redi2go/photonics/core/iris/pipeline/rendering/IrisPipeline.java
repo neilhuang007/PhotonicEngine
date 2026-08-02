@@ -55,6 +55,25 @@ public interface IrisPipeline {
                     : this;
         }
 
+        Builder relativeComputePass(
+                String name,
+                @Nullable String computeShader,
+                float widthScale,
+                float heightScale
+        );
+
+        default Builder relativeComputePass(
+                String name,
+                @Nullable String computeShader,
+                float widthScale,
+                float heightScale,
+                BooleanSupplier condition
+        ) {
+            return condition.getAsBoolean()
+                    ? relativeComputePass(name, computeShader, widthScale, heightScale)
+                    : this;
+        }
+
         Builder thenFlip(IrisFramebuffer... framebuffers);
 
         default Builder thenFlip(BooleanSupplier condition, IrisFramebuffer... framebuffers) {

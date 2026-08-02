@@ -23,6 +23,15 @@ public interface PipelineActionBuilder {
         return false;
     }
 
+    default boolean addRelativeComputePass(
+            String name,
+            @Nullable String computeShader,
+            float widthScale,
+            float heightScale
+    ) {
+        return false;
+    }
+
     default boolean addThenFlip(IrisFramebuffer... framebuffers) {
         return false;
     }

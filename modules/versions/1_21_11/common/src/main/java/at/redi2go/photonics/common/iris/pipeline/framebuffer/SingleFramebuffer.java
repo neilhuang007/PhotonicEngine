@@ -17,14 +17,16 @@ public class SingleFramebuffer extends GlFramebuffer implements InternalIrisFram
     private List<FramebufferAttachment> attachments;
 
     private final FramebufferSize sizeSupplier;
-    private final Vector2i currentSize = new Vector2i(-1, -1);
+    private final Vector2i currentSize;
 
     public SingleFramebuffer(
             List<FramebufferAttachment> attachments,
-            FramebufferSize sizeSupplier
+            FramebufferSize sizeSupplier,
+            Vector2ic initialSize
     ) {
         this.attachments = ImmutableList.copyOf(attachments);
         this.sizeSupplier = sizeSupplier;
+        this.currentSize = new Vector2i(initialSize);
 
         setDrawBuffers();
     }

@@ -8,7 +8,8 @@
 #include "/photonics/rendering/restir/neighbor/reservoir.glsl"
 
 #if defined PH_ENABLE_BLOCKLIGHT
-layout(location = DIRECT_RESERVOIR_0) out vec3 di_reservoir_0;
+layout(location = DIRECT_RESERVOIR_0) out uvec2 di_reservoir_0;
+layout(location = DIRECT_RESERVOIR_1) out vec3 di_reservoir_1;
 #endif
 
 
@@ -25,12 +26,11 @@ void main() {
     neighbor_load_samples(frag_tex_coord, samples);
 
 #if defined PH_ENABLE_BLOCKLIGHT
-    float direct_sample_weight = 0.0f;
     DirectReservoir direct_result = direct_reservoir_empty();
     DirectReservoir temp_direct = direct_reservoir_empty();
 
     direct_reservoir_load_previous(temp_direct, frag_tex_coord, false);
-    direct_reservoir_merge(direct_result, temp_direct, direct_sample_weight);
+    direct_reservoir_merge(direct_result, temp_direct);
 #endif
 
 
@@ -52,7 +52,7 @@ void main() {
 
 #if defined PH_ENABLE_BLOCKLIGHT
             if (direct_reservoir_load_previous(temp_direct, sample_texel, false)) {
-                direct_reservoir_merge(direct_result, temp_direct, direct_sample_weight);
+                direct_reservoir_merge(direct_result, temp_direct);
             }
 #endif
 
@@ -75,8 +75,12 @@ void main() {
 #if defined PH_ENABLE_BLOCKLIGHT
     direct_reservoir_clamp_samples(direct_result);
 
-    direct_reservoir_finalize_weight(direct_result, direct_sample_weight);
-    direct_reservoir_encode(direct_result, di_reservoir_0);
+    direct_reservoir_finalize_weight(direct_result);
+    direct_reservoir_encode(
+        direct_result,
+        di_reservoir_0,
+        di_reservoir_1
+    );
 #endif
 
 #if defined PH_ENABLE_RESTIR_GI

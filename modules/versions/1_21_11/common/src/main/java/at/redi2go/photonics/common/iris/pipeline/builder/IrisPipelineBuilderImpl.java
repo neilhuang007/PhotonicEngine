@@ -59,6 +59,18 @@ public class IrisPipelineBuilderImpl extends AbstractActionBuilderConsumer imple
     }
 
     @Override
+    public IrisPipeline.Builder relativeComputePass(
+            String name,
+            @Nullable String computeShader,
+            float widthScale,
+            float heightScale
+    ) {
+        addRelativeComputePass(name, computeShader, widthScale, heightScale);
+
+        return this;
+    }
+
+    @Override
     public IrisPipeline.Builder thenFlip(IrisFramebuffer... framebuffers) {
         addThenFlip(framebuffers);
 

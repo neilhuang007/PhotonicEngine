@@ -83,10 +83,11 @@ public class IrisFramebufferBuilderImpl implements IrisFramebuffer.Builder {
 
         return registration.apply(swapAttachmentsCount == 0 ? new SingleFramebuffer(
                 writeAttachments,
-                sizeSupplier
+                sizeSupplier,
+                initialSize
         ) : new FlippableFramebuffer(
-                new SingleFramebuffer(writeAttachments, sizeSupplier),
-                new SingleFramebuffer(readAttachments, sizeSupplier)
+                new SingleFramebuffer(writeAttachments, sizeSupplier, initialSize),
+                new SingleFramebuffer(readAttachments, sizeSupplier, initialSize)
         ));
     }
 }

@@ -8,15 +8,61 @@
 #include "/photonics/rendering/restir/restir.glsl"
 #include "/photonics/rendering/restir/regir/sampling.glsl"
 
-layout(location = DIRECT_RESERVOIR_0) out vec3 di_reservoir_0;
+layout(location = DIRECT_RESERVOIR_0) out uvec2 di_reservoir_0;
+layout(location = DIRECT_RESERVOIR_1) out vec3 di_reservoir_1;
+
+void regir_stream_local_light_sample(
+    inout DirectReservoir reservoir,
+    int light_index,
+    vec2 uv,
+    float inv_source_pdf,
+    float random
+) {
+    if (light_index < 0 ||
+            !(inv_source_pdf > 0.0f) ||
+            isnan(inv_source_pdf) ||
+            isinf(inv_source_pdf)) {
+        direct_reservoir_stream_sample(
+            reservoir,
+            direct_sample_empty(),
+            0.0f,
+            0.0f,
+            random
+        );
+        return;
+    }
+
+    DirectSample smple = DirectSample(light_index, uv);
+    float target = direct_sample_get_weight(
+        smple,
+        frag_rt_pos,
+        frag_geo_normal,
+        frag_tex_normal
+    );
+    direct_reservoir_stream_sample(
+        reservoir,
+        smple,
+        target,
+        inv_source_pdf,
+        random
+    );
+}
+
+void regir_finalize_initial_reservoir(inout DirectReservoir reservoir) {
+    direct_reservoir_finalize_weight(reservoir);
+
+    // A completed local-light RIS stage is one effective sample for
+    // subsequent temporal and spatial resampling in RTXDI.
+    if (reservoir.total_samples > 0.0f) {
+        reservoir.total_samples = 1.0f;
+    }
+}
 
 void main() {
     setup_frag_data(0);
     if (!frag_is_in_world) discard;
 
     DirectReservoir reservoir = direct_reservoir_empty();
-
-    float sample_weight = 0.0f;
 
     if (light_list_size > 0) {
         ReGIRRandomSamplerState random_sampler =
@@ -43,48 +89,31 @@ void main() {
                     float(PH_RESTIR_INITIAL_SAMPLES);
             int light_index;
             float inv_source_pdf;
-            if (!regir_select_next_light(
+            bool proposal_valid = regir_select_next_light(
                     light_selection,
                     proposal_random,
                     light_index,
                     inv_source_pdf
-            )) {
-                direct_reservoir_update(
-                    reservoir,
-                    direct_sample_empty(),
-                    0.0f,
-                    1.0f,
-                    regir_next_random(random_sampler)
-                );
-                continue;
-            }
-
-            DirectSample smple = DirectSample(light_index);
-            float target = direct_sample_get_weight(
-                    smple,
-                    frag_rt_pos,
-                    frag_geo_normal,
-                    frag_tex_normal
             );
-            float ris_weight = target * inv_source_pdf;
+            vec2 sample_uv = vec2(
+                regir_next_random(random_sampler),
+                regir_next_random(random_sampler)
+            );
 
-            if (direct_reservoir_update(
+            regir_stream_local_light_sample(
                     reservoir,
-                    smple,
-                    ris_weight,
-                    1.0f,
+                    proposal_valid ? light_index : -1,
+                    sample_uv,
+                    proposal_valid ? inv_source_pdf : 0.0f,
                     regir_next_random(random_sampler)
-            )) {
-                sample_weight = target;
-            }
+            );
         }
     }
 
-    direct_reservoir_finalize_weight(reservoir, sample_weight);
-    if (light_list_size > 0) {
-        // RTXDI collapses the completed initial RIS stage to one effective
-        // sample before temporal and spatial reservoir reuse.
-        reservoir.total_samples = 1.0f;
-    }
-    direct_reservoir_encode(reservoir, di_reservoir_0);
+    regir_finalize_initial_reservoir(reservoir);
+    direct_reservoir_encode(
+        reservoir,
+        di_reservoir_0,
+        di_reservoir_1
+    );
 }

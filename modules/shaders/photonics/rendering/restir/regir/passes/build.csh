@@ -9,6 +9,54 @@
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
+struct ReGIRBuildReservoir {
+    int lightIndex;
+    float selectedTarget;
+    float weightSum;
+};
+
+ReGIRBuildReservoir regir_empty_build_reservoir() {
+    return ReGIRBuildReservoir(-1, 0.0f, 0.0f);
+}
+
+void regir_stream_build_candidate(
+    inout ReGIRBuildReservoir reservoir,
+    int light_index,
+    float target,
+    float inv_source_pdf,
+    float random
+) {
+    float ris_weight = target * inv_source_pdf;
+    reservoir.weightSum += ris_weight;
+
+    if (ris_weight > 0.0f &&
+            random * reservoir.weightSum < ris_weight) {
+        reservoir.lightIndex = light_index;
+        reservoir.selectedTarget = target;
+    }
+}
+
+void regir_finalize_reservoir(
+    uint ris_buffer_pointer,
+    ReGIRBuildReservoir reservoir
+) {
+    float inv_source_pdf = reservoir.selectedTarget > 0.0f
+            ? reservoir.weightSum / reservoir.selectedTarget
+            : 0.0f;
+    if (reservoir.lightIndex < 0 ||
+            !(inv_source_pdf > 0.0f) ||
+            isnan(inv_source_pdf) ||
+            isinf(inv_source_pdf)) {
+        ph_regir_ris_records[ris_buffer_pointer] = uvec2(0u);
+        return;
+    }
+
+    ph_regir_ris_records[ris_buffer_pointer] = uvec2(
+        uint(reservoir.lightIndex),
+        floatBitsToUint(inv_source_pdf)
+    );
+}
+
 bool regir_build_uniform_candidate(
     inout ReGIRRandomSamplerState random_sampler,
     out int light_index,
@@ -77,9 +125,7 @@ void main() {
     );
 #endif
 
-    int selected_light = 0;
-    float selected_target = 0.0f;
-    float weight_sum = 0.0f;
+    ReGIRBuildReservoir reservoir = regir_empty_build_reservoir();
     float inv_sample_count =
             1.0f / float(ph_regir.commonParams.numRegirBuildSamples);
 
@@ -105,6 +151,7 @@ void main() {
         );
 #endif
 
+        inv_source_pdf *= inv_sample_count;
         float target = candidate_valid
                 ? regir_light_target_for_volume(
                     candidate_light,
@@ -112,27 +159,14 @@ void main() {
                     cell_radius
                 )
                 : 0.0f;
-        float ris_weight = target * inv_source_pdf * inv_sample_count;
-        weight_sum += ris_weight;
-
-        if (regir_next_random(random_sampler) * weight_sum < ris_weight) {
-            selected_light = candidate_light;
-            selected_target = target;
-        }
+        regir_stream_build_candidate(
+            reservoir,
+            candidate_light,
+            target,
+            inv_source_pdf,
+            regir_next_random(random_sampler)
+        );
     }
 
-    float reservoir_weight = selected_target > 0.0f
-            ? weight_sum / selected_target
-            : 0.0f;
-    if (!(reservoir_weight > 0.0f) ||
-            isnan(reservoir_weight) ||
-            isinf(reservoir_weight)) {
-        ph_regir_ris_records[ris_buffer_pointer] = uvec2(0u);
-        return;
-    }
-
-    ph_regir_ris_records[ris_buffer_pointer] = uvec2(
-        uint(selected_light),
-        floatBitsToUint(reservoir_weight)
-    );
+    regir_finalize_reservoir(ris_buffer_pointer, reservoir);
 }

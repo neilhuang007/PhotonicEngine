@@ -10,7 +10,8 @@
 #include "/photonics/modifiers/restir_gi_modifier.glsl"
 
 #if defined PH_ENABLE_BLOCKLIGHT
-layout(location = DIRECT_RESERVOIR_0) out vec3 di_reservoir_0;
+layout(location = DIRECT_RESERVOIR_0) out uvec2 di_reservoir_0;
+layout(location = DIRECT_RESERVOIR_1) out vec3 di_reservoir_1;
 #endif
 
 #if defined PH_ENABLE_RESTIR_GI
@@ -55,6 +56,10 @@ void main() {
         frag_tex_normal
     ) * get_exposure();
 
-    direct_reservoir_encode(direct_reservoir, di_reservoir_0);
+    direct_reservoir_encode(
+        direct_reservoir,
+        di_reservoir_0,
+        di_reservoir_1
+    );
 #endif
 }

@@ -73,6 +73,27 @@ public class IrisRendererBuilder implements PipelineActionBuilder {
         return true;
     }
 
+    @Override
+    public boolean addRelativeComputePass(
+            String name,
+            @Nullable String computeShader,
+            float widthScale,
+            float heightScale
+    ) {
+        if (finished) return false;
+
+        passes.add(
+                new DeferredIrisRenderer.RelativeComputePass(
+                        name,
+                        computeShader,
+                        widthScale,
+                        heightScale
+                )
+        );
+
+        return true;
+    }
+
     public IrisRenderer buildAction() {
         if (passes.isEmpty()) return EmptyIrisRenderer.INSTANCE;
 

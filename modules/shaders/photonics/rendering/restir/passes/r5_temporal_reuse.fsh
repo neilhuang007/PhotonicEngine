@@ -6,7 +6,8 @@
 #include "/photonics/rendering/restir/restir.glsl"
 
 #if defined PH_ENABLE_BLOCKLIGHT
-layout(location = DIRECT_RESERVOIR_0) out vec3 di_reservoir_0;
+layout(location = DIRECT_RESERVOIR_0) out uvec2 di_reservoir_0;
+layout(location = DIRECT_RESERVOIR_1) out vec3 di_reservoir_1;
 #endif
 
 #if defined PH_ENABLE_RESTIR_GI
@@ -34,23 +35,26 @@ void main() {
 #if defined PH_ENABLE_BLOCKLIGHT
     // DIRECT TEMPORAL REUSE
 
-    float direct_sample_weight = 0.0f;
     DirectReservoir direct_result = direct_reservoir_empty();
     DirectReservoir temp_direct = direct_reservoir_empty();
 
     // load freshly sampled reservoir
     direct_reservoir_load(temp_direct, frag_tex_coord);
-    direct_reservoir_merge(direct_result, temp_direct, direct_sample_weight);
+    direct_reservoir_merge(direct_result, temp_direct);
 
     // load temporal sampled reservoir
     if (direct_reservoir_load_previous(temp_direct, prev_texel, true)) {
         temp_direct.total_samples = min(max_direct_temporal_samples, temp_direct.total_samples);
-        direct_reservoir_merge(direct_result, temp_direct, direct_sample_weight);
+        direct_reservoir_merge(direct_result, temp_direct);
     }
 
     // write resulting reservoir
-    direct_reservoir_finalize_weight(direct_result, direct_sample_weight);
-    direct_reservoir_encode(direct_result, di_reservoir_0);
+    direct_reservoir_finalize_weight(direct_result);
+    direct_reservoir_encode(
+        direct_result,
+        di_reservoir_0,
+        di_reservoir_1
+    );
 
 #endif
 

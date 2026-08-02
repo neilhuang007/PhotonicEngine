@@ -56,6 +56,18 @@ public record RepeatAction(
         }
 
         @Override
+        public boolean addRelativeComputePass(
+                String name,
+                @Nullable String computeShader,
+                float widthScale,
+                float heightScale
+        ) {
+            if (hasEnded) return false;
+
+            return super.addRelativeComputePass(name, computeShader, widthScale, heightScale);
+        }
+
+        @Override
         public boolean addThenFlip(IrisFramebuffer... framebuffers) {
             if (hasEnded) return false;
 

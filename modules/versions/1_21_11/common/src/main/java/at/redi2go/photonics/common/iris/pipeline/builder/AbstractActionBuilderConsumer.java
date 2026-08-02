@@ -73,6 +73,23 @@ public abstract class AbstractActionBuilderConsumer implements PipelineActionBui
     }
 
     @Override
+    public boolean addRelativeComputePass(
+            String name,
+            @Nullable String computeShader,
+            float widthScale,
+            float heightScale
+    ) {
+        if (shouldCreateAction(e -> e.addRelativeComputePass(name, computeShader, widthScale, heightScale))) {
+            var pass = factory.newRenderer(currentDebugGroup);
+            pass.addRelativeComputePass(name, computeShader, widthScale, heightScale);
+
+            actions.add(pass);
+        }
+
+        return true;
+    }
+
+    @Override
     public boolean addThenFlip(IrisFramebuffer... framebuffers) {
         if (shouldCreateAction(e -> e.addThenFlip(framebuffers))) {
             actions.add(new FlipAction(framebuffers));

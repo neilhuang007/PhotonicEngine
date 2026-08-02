@@ -15,6 +15,31 @@ struct ReGIRLightSelectionContext {
     uint size;
 };
 
+struct ReGIRRisRecord {
+    int lightIndex;
+    float invSourcePdf;
+};
+
+bool regir_ris_record_is_valid(ReGIRRisRecord record) {
+    return record.lightIndex >= 0
+            && record.lightIndex < light_list_size
+            && record.invSourcePdf > 0.0f
+            && !isnan(record.invSourcePdf)
+            && !isinf(record.invSourcePdf);
+}
+
+bool regir_load_ris_record(
+    uint record_index,
+    out ReGIRRisRecord record
+) {
+    uvec2 packed_record = ph_regir_ris_records[record_index];
+    record = ReGIRRisRecord(
+        int(packed_record.x & 0x7fffffffu),
+        uintBitsToFloat(packed_record.y)
+    );
+    return regir_ris_record_is_valid(record);
+}
+
 ReGIRLightSelectionContext regir_initialize_light_selection_context(
     inout ReGIRRandomSamplerState coherent_random,
     vec3 surface_position
@@ -85,15 +110,19 @@ bool regir_select_next_light(
             uint(floor(random * float(context.size))),
             context.size - 1u
         );
-        uvec2 record = ph_regir_ris_records[context.offset + sample_index];
-        light_index = int(record.x & 0x7fffffffu);
-        inv_source_pdf = uintBitsToFloat(record.y);
+        ReGIRRisRecord record;
+        if (!regir_load_ris_record(
+                context.offset + sample_index,
+                record
+        )) {
+            light_index = -1;
+            inv_source_pdf = 0.0f;
+            return false;
+        }
 
-        return light_index >= 0
-                && light_index < light_list_size
-                && inv_source_pdf > 0.0f
-                && !isnan(inv_source_pdf)
-                && !isinf(inv_source_pdf);
+        light_index = record.lightIndex;
+        inv_source_pdf = record.invSourcePdf;
+        return true;
     }
 
     if (context.mode == PH_REGIR_SELECTION_POWER_RIS) {

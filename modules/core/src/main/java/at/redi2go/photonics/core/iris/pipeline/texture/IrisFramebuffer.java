@@ -9,6 +9,8 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 
 public interface IrisFramebuffer extends RenderingComponent, Disposable {
+    Vector2ic viewportSize();
+
     void flip();
 
     void recalculateSizes();

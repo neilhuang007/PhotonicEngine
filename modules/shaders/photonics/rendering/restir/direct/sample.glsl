@@ -4,11 +4,12 @@
 #include "/photonics/utility/random.glsl"
 
 struct DirectSample {
-    int light_index; // The index of the sampled light, will be -1 when empty
+    int light_index;
+    vec2 uv;
 };
 
 DirectSample direct_sample_empty() {
-    return DirectSample(-1);
+    return DirectSample(-1, vec2(0.0f));
 }
 
 bool direct_sample_is_empty(DirectSample smple) {
@@ -26,6 +27,49 @@ Light direct_sample_get_light(DirectSample smple) {
     return light_list_get(int(smple.light_index));
 }
 
+vec3 direct_sample_get_position(
+    DirectSample smple,
+    Light light,
+    vec3 sample_pos
+) {
+#ifdef PH_RESTIR_SOFT_SHADOWS
+    vec3 light_position = floor(light.position) + 0.5f;
+    vec3 sample_direction = light_position - sample_pos;
+    float sample_distance_squared =
+            dot(sample_direction, sample_direction);
+    if (!(sample_distance_squared > 1e-12f)) {
+        return light_position;
+    }
+
+    vec3 sample_normal = sample_direction *
+            inversesqrt(sample_distance_squared);
+    vec3 basis_axis = abs(sample_normal.y) < 0.999f
+            ? vec3(0.0f, 1.0f, 0.0f)
+            : vec3(1.0f, 0.0f, 0.0f);
+    vec3 sample_tangent = normalize(cross(
+        basis_axis,
+        sample_normal
+    ));
+    vec3 sample_bitangent = cross(
+        sample_normal,
+        sample_tangent
+    );
+
+    float point_radius = ph_light_jitter_radius * sqrt(smple.uv.x);
+    float point_angle = smple.uv.y * 2.0f * 3.14159265f;
+    vec2 disk_point = vec2(
+        point_radius * cos(point_angle),
+        point_radius * sin(point_angle)
+    );
+
+    return light_position +
+            disk_point.x * sample_tangent +
+            disk_point.y * sample_bitangent;
+#else
+    return light.position;
+#endif
+}
+
 vec3 direct_sample_get_color(
     DirectSample smple,
     Light light,
@@ -36,10 +80,15 @@ vec3 direct_sample_get_color(
     if (!light_is_valid(light))
         return vec3(0.0f);
 
+    vec3 light_position = direct_sample_get_position(
+        smple,
+        light,
+        sample_pos
+    );
     return light_sample_at(
         light,
         sample_pos,
-        light.position,
+        light_position,
         geo_normal,
         tex_normal
     );
