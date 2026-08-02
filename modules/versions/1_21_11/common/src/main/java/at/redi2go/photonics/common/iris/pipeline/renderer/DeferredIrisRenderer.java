@@ -39,11 +39,28 @@ public class DeferredIrisRenderer implements IrisRenderer, PipelineAction {
         this.activeRenderer = activeImpl;
     }
 
-    public record Pass(
+    public sealed interface Pass permits DeferredPass, ComputePass {
+        String name();
+    }
+
+    public record DeferredPass(
             String name,
             @Nullable String fragmentShader,
             @Nullable String vertexShader,
             @Nullable IrisFramebuffer framebuffer
-    ) {
+    ) implements Pass {
+    }
+
+    public record ComputePass(
+            String name,
+            @Nullable String computeShader,
+            int workGroupsX,
+            int workGroupsY,
+            int workGroupsZ
+    ) implements Pass {
+        public ComputePass {
+            if (workGroupsX < 0 || workGroupsY < 0 || workGroupsZ < 0)
+                throw new IllegalArgumentException("compute work group counts must be non-negative");
+        }
     }
 }

@@ -34,6 +34,27 @@ public interface IrisPipeline {
             return condition.getAsBoolean() ? deferredPass(name, fragmentShader, vertexShader) : this;
         }
 
+        Builder computePass(
+                String name,
+                @Nullable String computeShader,
+                int workGroupsX,
+                int workGroupsY,
+                int workGroupsZ
+        );
+
+        default Builder computePass(
+                String name,
+                @Nullable String computeShader,
+                int workGroupsX,
+                int workGroupsY,
+                int workGroupsZ,
+                BooleanSupplier condition
+        ) {
+            return condition.getAsBoolean()
+                    ? computePass(name, computeShader, workGroupsX, workGroupsY, workGroupsZ)
+                    : this;
+        }
+
         Builder thenFlip(IrisFramebuffer... framebuffers);
 
         default Builder thenFlip(BooleanSupplier condition, IrisFramebuffer... framebuffers) {

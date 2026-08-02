@@ -3,6 +3,9 @@ package at.redi2go.photonics.common;
 import at.redi2go.photonics.api.shaders.AlphaMode;
 import at.redi2go.photonics.api.shaders.LightingMode;
 import at.redi2go.photonics.api.shaders.PhotonicsProperties;
+import at.redi2go.photonics.api.shaders.ReGIRLocalLightFallbackMode;
+import at.redi2go.photonics.api.shaders.ReGIRLocalLightPresamplingMode;
+import at.redi2go.photonics.api.shaders.ReGIRMode;
 
 public class PhotonicsPropertiesImpl implements PhotonicsProperties {
     public boolean enabled = PhotonicsProperties.DEFAULT_ENABLED;
@@ -26,6 +29,20 @@ public class PhotonicsPropertiesImpl implements PhotonicsProperties {
     public boolean restirCombinedGi = PhotonicsProperties.DEFAULT_USE_RESTIR_COMBINED_GI;
     public int restirDenoiserPasses = PhotonicsProperties.DEFAULT_RESTIR_DENOISER_PASSES;
     public int maxSamples = PhotonicsProperties.DEFAULT_MAX_SAMPLES;
+    public ReGIRMode reGIRMode = PhotonicsProperties.DEFAULT_REGIR_MODE;
+    public ReGIRLocalLightPresamplingMode reGIRLocalLightPresamplingMode =
+            PhotonicsProperties.DEFAULT_REGIR_LOCAL_LIGHT_PRESAMPLING_MODE;
+    public ReGIRLocalLightFallbackMode reGIRLocalLightFallbackMode =
+            PhotonicsProperties.DEFAULT_REGIR_LOCAL_LIGHT_FALLBACK_MODE;
+    public int reGIRGridSizeX = PhotonicsProperties.DEFAULT_REGIR_GRID_SIZE_X;
+    public int reGIRGridSizeY = PhotonicsProperties.DEFAULT_REGIR_GRID_SIZE_Y;
+    public int reGIRGridSizeZ = PhotonicsProperties.DEFAULT_REGIR_GRID_SIZE_Z;
+    public int reGIROnionDetailLayers = PhotonicsProperties.DEFAULT_REGIR_ONION_DETAIL_LAYERS;
+    public int reGIROnionCoverageLayers = PhotonicsProperties.DEFAULT_REGIR_ONION_COVERAGE_LAYERS;
+    public int reGIRLightsPerCell = PhotonicsProperties.DEFAULT_REGIR_LIGHTS_PER_CELL;
+    public float reGIRCellSize = PhotonicsProperties.DEFAULT_REGIR_CELL_SIZE;
+    public float reGIRSamplingJitter = PhotonicsProperties.DEFAULT_REGIR_SAMPLING_JITTER;
+    public int reGIRBuildSamples = PhotonicsProperties.DEFAULT_REGIR_BUILD_SAMPLES;
 
     @Override
     public boolean isPhotonicsEnabled() {
@@ -130,5 +147,65 @@ public class PhotonicsPropertiesImpl implements PhotonicsProperties {
     @Override
     public int getRestirDenoiserPasses() {
         return restirDenoiserPasses;
+    }
+
+    @Override
+    public ReGIRMode getReGIRMode() {
+        return reGIRMode;
+    }
+
+    @Override
+    public ReGIRLocalLightPresamplingMode getReGIRLocalLightPresamplingMode() {
+        return reGIRLocalLightPresamplingMode;
+    }
+
+    @Override
+    public ReGIRLocalLightFallbackMode getReGIRLocalLightFallbackMode() {
+        return reGIRLocalLightFallbackMode;
+    }
+
+    @Override
+    public int getReGIRGridSizeX() {
+        return reGIRGridSizeX;
+    }
+
+    @Override
+    public int getReGIRGridSizeY() {
+        return reGIRGridSizeY;
+    }
+
+    @Override
+    public int getReGIRGridSizeZ() {
+        return reGIRGridSizeZ;
+    }
+
+    @Override
+    public int getReGIROnionDetailLayers() {
+        return reGIROnionDetailLayers;
+    }
+
+    @Override
+    public int getReGIROnionCoverageLayers() {
+        return reGIROnionCoverageLayers;
+    }
+
+    @Override
+    public int getReGIRLightsPerCell() {
+        return reGIRLightsPerCell;
+    }
+
+    @Override
+    public float getReGIRCellSize() {
+        return reGIRCellSize;
+    }
+
+    @Override
+    public float getReGIRSamplingJitter() {
+        return reGIRSamplingJitter;
+    }
+
+    @Override
+    public int getReGIRBuildSamples() {
+        return reGIRBuildSamples;
     }
 }

@@ -1,8 +1,9 @@
 package at.redi2go.photonics.common.mixins.iris.pipeline;
 
 import at.redi2go.photonics.common.iris.IrisUtil;
-import at.redi2go.photonics.common.iris.pipeline.IrisRenderingPipelineExt;
 import at.redi2go.photonics.common.iris.buffers.GlBufferHolder;
+import at.redi2go.photonics.common.iris.pipeline.IrisRenderingPipelineExt;
+import at.redi2go.photonics.common.iris.pipeline.renderer.DeferredIrisRenderer;
 import at.redi2go.photonics.common.iris.pipeline.renderer.PhotonicsRenderer;
 import at.redi2go.photonics.common.mixins.iris.ShaderPackAccessor;
 import at.redi2go.photonics.core.iris.PhotonicsExtension;
@@ -21,6 +22,7 @@ import net.irisshaders.iris.shaderpack.include.AbsolutePackPath;
 import net.irisshaders.iris.shaderpack.programs.ComputeSource;
 import net.irisshaders.iris.shaderpack.programs.ProgramSet;
 import net.irisshaders.iris.shaderpack.programs.ProgramSource;
+import net.irisshaders.iris.shaderpack.properties.ShaderProperties;
 import net.irisshaders.iris.shaderpack.texture.TextureStage;
 import net.irisshaders.iris.shadows.ShadowRenderTargets;
 import net.irisshaders.iris.targets.BufferFlipper;
@@ -28,6 +30,7 @@ import net.irisshaders.iris.targets.RenderTargets;
 import net.irisshaders.iris.uniforms.FrameUpdateNotifier;
 import net.irisshaders.iris.uniforms.custom.CustomUniforms;
 import org.jetbrains.annotations.Nullable;
+import org.joml.Vector3i;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -91,7 +94,7 @@ public abstract class IrisRenderingPipelineMixin implements IrisRenderingPipelin
             )
     )
     private void init(ProgramSet programSet, CallbackInfo ci, @Local BufferFlipper flipper) {
-        bufferHolder = new GlBufferHolder();
+        bufferHolder = new GlBufferHolder(IrisUtil.getUsedBuffers());
         phRenderers = List.of();
 
         IrisUtil.getPhotonics()
@@ -108,20 +111,37 @@ public abstract class IrisRenderingPipelineMixin implements IrisRenderingPipelin
 
             for (int i = 0; i < passes.size(); i++) {
                 var pass = passes.get(i);
-                compositeSources[i] = new ProgramSource(
-                        pass.name(),
-                        readSource(pass.vertexShader()),
-                        null,
-                        null,
-                        null,
-                        readSource(pass.fragmentShader()),
-                        programSet,
-                        null,
-                        null
-                );
+                if (pass instanceof DeferredIrisRenderer.DeferredPass deferredPass) {
+                    compositeSources[i] = new ProgramSource(
+                            deferredPass.name(),
+                            readSource(deferredPass.vertexShader()),
+                            null,
+                            null,
+                            null,
+                            readSource(deferredPass.fragmentShader()),
+                            programSet,
+                            null,
+                            null
+                    );
+                    computeSources[i] = new ComputeSource[0];
+                } else if (pass instanceof DeferredIrisRenderer.ComputePass computePass) {
+                    var computeSource = new ComputeSource(
+                            computePass.name(),
+                            readSource(computePass.computeShader()),
+                            programSet,
+                            ShaderProperties.empty()
+                    );
+                    computeSource.setWorkGroups(new Vector3i(
+                            computePass.workGroupsX(),
+                            computePass.workGroupsY(),
+                            computePass.workGroupsZ()
+                    ));
 
-                //TODO: For future use
-                computeSources[i] = new ComputeSource[0];
+                    compositeSources[i] = null;
+                    computeSources[i] = new ComputeSource[]{computeSource};
+                } else {
+                    throw new IllegalStateException("unsupported Photonics pass type: " + pass.getClass().getName());
+                }
             }
 
             phRenderers.add(
@@ -172,7 +192,7 @@ public abstract class IrisRenderingPipelineMixin implements IrisRenderingPipelin
     }
 
     @Unique
-    private static String readSource(@Nullable String fileName) {
+    private static @Nullable String readSource(@Nullable String fileName) {
         if (fileName == null) return null;
 
         ShaderPack shaderPack = Iris.getCurrentPack().orElse(null);

@@ -3,7 +3,10 @@ plugins {
 }
 
 kotlin {
-    jvmToolchain(22)
+    // The Minecraft 1.21.11 modules target Java 21; build logic does not use
+    // Java 22-specific APIs, so compiling it with the same LTS toolchain keeps
+    // a standard Java 21 development environment runnable.
+    jvmToolchain(21)
 }
 
 repositories {

@@ -31,18 +31,33 @@ bool direct_reservoir_update(
     inout DirectReservoir reservoir,
     DirectSample smple,
     float weight,
-    float samples
+    float samples,
+    float random
 ) {
     reservoir.weight += weight;
     reservoir.total_samples += samples;
 
-    float required_rng = weight / reservoir.weight;
-    if (ph_rand_next_float(frag_rnd_state) < required_rng) {
+    if (weight > 0.0f && random * reservoir.weight < weight) {
         reservoir.smple = smple;
         return true;
     }
 
     return false;
+}
+
+bool direct_reservoir_update(
+    inout DirectReservoir reservoir,
+    DirectSample smple,
+    float weight,
+    float samples
+) {
+    return direct_reservoir_update(
+        reservoir,
+        smple,
+        weight,
+        samples,
+        ph_rand_next_float(frag_rnd_state)
+    );
 }
 
 bool direct_reservoir_merge(
@@ -91,7 +106,7 @@ void direct_reservoir_finalize_weight(
     inout DirectReservoir reservoir,
     float sample_weight
 ) {
-    if (sample_weight <= 0.0f) {
+    if (sample_weight <= 0.0f || reservoir.total_samples <= 0.0f) {
         reservoir.weight = 0.0f;
         return;
     }

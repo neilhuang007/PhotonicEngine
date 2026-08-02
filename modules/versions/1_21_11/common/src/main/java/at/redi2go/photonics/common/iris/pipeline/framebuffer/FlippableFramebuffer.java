@@ -1,7 +1,10 @@
 package at.redi2go.photonics.common.iris.pipeline.framebuffer;
 
+import at.redi2go.photonics.api.gpu.textures.IGpuTexture2D;
 import at.redi2go.photonics.core.iris.pipeline.texture.ISamplerHolder;
 import org.joml.Vector2ic;
+
+import java.util.Optional;
 
 public class FlippableFramebuffer implements InternalIrisFramebuffer {
     private SingleFramebuffer write;
@@ -41,6 +44,13 @@ public class FlippableFramebuffer implements InternalIrisFramebuffer {
     public void recalculateSizes() {
         write.recalculateSizes();
         read.recalculateSizes();
+    }
+
+    public Optional<IGpuTexture2D> currentAttachment(String name) {
+        return write.attachments().stream()
+                .filter(attachment -> attachment.name().equals(name))
+                .map(FramebufferAttachment::texture)
+                .findFirst();
     }
 
     @Override

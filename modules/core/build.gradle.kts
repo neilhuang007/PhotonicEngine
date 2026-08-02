@@ -31,10 +31,17 @@ dependencies {
     implementation(projects.modules.api)
     implementation(coreLibs.jetrains.annotations)
     implementation(coreLibs.slf4j.api)
+
+    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.4")
 }
 
 
 tasks {
+    test {
+        useJUnitPlatform()
+    }
+
     jar {
         inputs.property("archivesName", project.base.archivesName)
     }

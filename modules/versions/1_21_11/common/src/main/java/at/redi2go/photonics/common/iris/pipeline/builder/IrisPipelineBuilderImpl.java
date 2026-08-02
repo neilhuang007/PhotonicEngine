@@ -46,6 +46,19 @@ public class IrisPipelineBuilderImpl extends AbstractActionBuilderConsumer imple
     }
 
     @Override
+    public IrisPipeline.Builder computePass(
+            String name,
+            @Nullable String computeShader,
+            int workGroupsX,
+            int workGroupsY,
+            int workGroupsZ
+    ) {
+        addComputePass(name, computeShader, workGroupsX, workGroupsY, workGroupsZ);
+
+        return this;
+    }
+
+    @Override
     public IrisPipeline.Builder thenFlip(IrisFramebuffer... framebuffers) {
         addThenFlip(framebuffers);
 

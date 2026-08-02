@@ -2,8 +2,11 @@ package at.redi2go.photonics.core.iris;
 
 import at.redi2go.photonics.api.shaders.LightingMode;
 import at.redi2go.photonics.api.shaders.PhotonicsProperties;
+import at.redi2go.photonics.api.gpu.systems.IRenderSystem;
 import at.redi2go.photonics.core.Photonics;
 import at.redi2go.photonics.core.iris.pipeline.DefineHolder;
+import at.redi2go.photonics.core.rendering.restir.regir.ReGIRConfiguration;
+import at.redi2go.photonics.core.rendering.restir.regir.ReGIRContext;
 
 public class IrisDefines {
     public static void registerVersionDefines(DefineHolder defines) {
@@ -48,13 +51,42 @@ public class IrisDefines {
         defines.intDefine("PH_RESTIR_SPATIAL_REUSE_SAMPLES", phProperties.getRestirSpatialReuseSamples());
         defines.floatDefine("PH_RESTIR_SPATIAL_REUSE_RADIUS", phProperties.getRestirSpatialReuseRadius());
         defines.intDefine("PH_RESTIR_ACCUMULATION_FRAMES", phProperties.getRestirAccumulationFrames());
-        defines.intDefine("PH_RESTIR_DENOISER_PASSES", phProperties.getRestirDenoiserPasses());
+        int requestedDenoiserPasses = phProperties.getRestirDenoiserPasses();
+        defines.intDefine(
+                "PH_RESTIR_DENOISER_PASSES",
+                requestedDenoiserPasses == 0 ? 0 : Math.max(requestedDenoiserPasses, 7)
+        );
 
         if (phProperties.useRestirSoftShadows())
             defines.stringDefine("PH_RESTIR_SOFT_SHADOWS", "");
 
         if (phProperties.getLightingMode() == LightingMode.RESTIR && phProperties.useRestirCombinedGi())
             defines.stringDefine("PH_RESTIR_COMBINED_GI", "");
+
+        ReGIRContext reGIRContext = new ReGIRContext(
+                ReGIRConfiguration.from(phProperties),
+                IRenderSystem.getDevice().ph$getMaxShaderStorageBlockSize()
+        );
+        ReGIRConfiguration reGIRConfiguration = reGIRContext.configuration();
+        defines.enumDefine("PH_REGIR_MODE", reGIRConfiguration.mode());
+        defines.enumDefine(
+                "PH_REGIR_LOCAL_LIGHT_PRESAMPLING_MODE",
+                reGIRConfiguration.localLightPresamplingMode()
+        );
+        defines.enumDefine(
+                "PH_REGIR_LOCAL_LIGHT_SAMPLING_FALLBACK_MODE",
+                reGIRConfiguration.localLightFallbackMode()
+        );
+        defines.intDefine("PH_REGIR_GRID_SIZE_X", reGIRConfiguration.gridSizeX());
+        defines.intDefine("PH_REGIR_GRID_SIZE_Y", reGIRConfiguration.gridSizeY());
+        defines.intDefine("PH_REGIR_GRID_SIZE_Z", reGIRConfiguration.gridSizeZ());
+        defines.intDefine("PH_REGIR_ONION_DETAIL_LAYERS", reGIRConfiguration.onionDetailLayers());
+        defines.intDefine("PH_REGIR_ONION_COVERAGE_LAYERS", reGIRConfiguration.onionCoverageLayers());
+        defines.intDefine("PH_REGIR_LIGHTS_PER_CELL", reGIRConfiguration.lightsPerCell());
+        defines.floatDefine("PH_REGIR_CELL_SIZE", reGIRConfiguration.cellSize());
+        defines.floatDefine("PH_REGIR_SAMPLING_JITTER", reGIRConfiguration.samplingJitter());
+        defines.intDefine("PH_REGIR_BUILD_SAMPLES", reGIRConfiguration.buildSamples());
+        defines.intDefine("PH_REGIR_LIGHT_SLOT_COUNT", reGIRContext.lightSlotCount());
 
         defines.intDefine("PH_MAX_SAMPLES",  phProperties.getMaxSamples());
     }

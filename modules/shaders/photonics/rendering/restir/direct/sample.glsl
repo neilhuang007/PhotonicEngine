@@ -11,19 +11,12 @@ DirectSample direct_sample_empty() {
     return DirectSample(-1);
 }
 
-DirectSample direct_sample_random(inout uint rnd_state) {
-    return DirectSample(ph_rand_next_int(rnd_state, 0, light_list_size));
-}
-
 bool direct_sample_is_empty(DirectSample smple) {
     return smple.light_index == -1;
 }
 
 float direct_sample_weight(vec3 color) {
-    const float min_weight = 0.0001f;
-    float weight = ph_luminance(color);
-
-    return weight < min_weight ? 0.0f : weight;
+    return max(0.0f, ph_luminance(color));
 }
 
 Light direct_sample_get_light(DirectSample smple) {
@@ -49,7 +42,7 @@ vec3 direct_sample_get_color(
         light.position,
         geo_normal,
         tex_normal
-    ) * light_list_size;
+    );
 }
 
 float direct_sample_get_weight(

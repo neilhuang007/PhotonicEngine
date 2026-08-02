@@ -2,6 +2,9 @@ package at.redi2go.photonics.common.mixins.iris;
 
 import at.redi2go.photonics.api.shaders.AlphaMode;
 import at.redi2go.photonics.api.shaders.LightingMode;
+import at.redi2go.photonics.api.shaders.ReGIRLocalLightFallbackMode;
+import at.redi2go.photonics.api.shaders.ReGIRLocalLightPresamplingMode;
+import at.redi2go.photonics.api.shaders.ReGIRMode;
 import at.redi2go.photonics.common.iris.ShaderPropertiesBridge;
 import com.llamalad7.mixinextras.sugar.Local;
 import it.unimi.dsi.fastutil.booleans.BooleanConsumer;
@@ -28,6 +31,18 @@ import static at.redi2go.photonics.api.shaders.PhotonicsProperties.MAX_GI_BOUNCE
 import static at.redi2go.photonics.api.shaders.PhotonicsProperties.MAX_LIGHTS_KEY;
 import static at.redi2go.photonics.api.shaders.PhotonicsProperties.MAX_SAMPLES_KEY;
 import static at.redi2go.photonics.api.shaders.PhotonicsProperties.RENDER_SCALE_KEY;
+import static at.redi2go.photonics.api.shaders.PhotonicsProperties.REGIR_BUILD_SAMPLES_KEY;
+import static at.redi2go.photonics.api.shaders.PhotonicsProperties.REGIR_CELL_SIZE_KEY;
+import static at.redi2go.photonics.api.shaders.PhotonicsProperties.REGIR_GRID_SIZE_X_KEY;
+import static at.redi2go.photonics.api.shaders.PhotonicsProperties.REGIR_GRID_SIZE_Y_KEY;
+import static at.redi2go.photonics.api.shaders.PhotonicsProperties.REGIR_GRID_SIZE_Z_KEY;
+import static at.redi2go.photonics.api.shaders.PhotonicsProperties.REGIR_LIGHTS_PER_CELL_KEY;
+import static at.redi2go.photonics.api.shaders.PhotonicsProperties.REGIR_LOCAL_LIGHT_FALLBACK_MODE_KEY;
+import static at.redi2go.photonics.api.shaders.PhotonicsProperties.REGIR_LOCAL_LIGHT_PRESAMPLING_MODE_KEY;
+import static at.redi2go.photonics.api.shaders.PhotonicsProperties.REGIR_MODE_KEY;
+import static at.redi2go.photonics.api.shaders.PhotonicsProperties.REGIR_ONION_COVERAGE_LAYERS_KEY;
+import static at.redi2go.photonics.api.shaders.PhotonicsProperties.REGIR_ONION_DETAIL_LAYERS_KEY;
+import static at.redi2go.photonics.api.shaders.PhotonicsProperties.REGIR_SAMPLING_JITTER_KEY;
 import static at.redi2go.photonics.api.shaders.PhotonicsProperties.RESTIR_ACCUMULATION_FRAMES_KEY;
 import static at.redi2go.photonics.api.shaders.PhotonicsProperties.RESTIR_COMBINED_GI_KEY;
 import static at.redi2go.photonics.api.shaders.PhotonicsProperties.RESTIR_DENOISER_PASSES_KEY;
@@ -36,6 +51,10 @@ import static at.redi2go.photonics.api.shaders.PhotonicsProperties.RESTIR_SOFT_S
 import static at.redi2go.photonics.api.shaders.PhotonicsProperties.RESTIR_SPATIAL_REUSE_RADIUS_KEY;
 import static at.redi2go.photonics.api.shaders.PhotonicsProperties.RESTIR_SPATIAL_REUSE_SAMPLES_KEY;
 import static at.redi2go.photonics.api.shaders.PhotonicsProperties.SEPARATE_HANDHELD_RAYS_KEY;
+import static at.redi2go.photonics.api.shaders.ReGIRLimits.PORTABLE_UI_GRID_AXIS_MAX;
+import static at.redi2go.photonics.api.shaders.ReGIRLimits.PORTABLE_UI_LIGHTS_PER_CELL_MAX;
+import static at.redi2go.photonics.api.shaders.ReGIRLimits.SUPPORTED_GRID_AXIS_MIN;
+import static at.redi2go.photonics.api.shaders.ReGIRLimits.SUPPORTED_LIGHTS_PER_CELL_MIN;
 
 @Mixin(ShaderProperties.class)
 public abstract class ShaderPropertiesMixin {
@@ -76,9 +95,67 @@ public abstract class ShaderPropertiesMixin {
         handleUnsignedIntDirective(key, value, RESTIR_SPATIAL_REUSE_SAMPLES_KEY, e -> phProperties.restirSpatialReuseSamples = Math.min(e, 4));
         handleFloatDirective(key, value, RESTIR_SPATIAL_REUSE_RADIUS_KEY, e -> phProperties.restirRestirSpatialReuseRadius = e);
         handleNonZeroDirective(key, value, RESTIR_ACCUMULATION_FRAMES_KEY, e -> phProperties.restirAccumulationFrames = e);
-        handleUnsignedIntDirective(key, value, RESTIR_DENOISER_PASSES_KEY, e -> phProperties.restirDenoiserPasses = e);
+        handleUnsignedIntDirective(
+                key,
+                value,
+                RESTIR_DENOISER_PASSES_KEY,
+                e -> phProperties.restirDenoiserPasses = e == 0 ? 0 : Math.max(e, 7)
+        );
         handleBooleanDirective(key, value, RESTIR_SOFT_SHADOWS_KEY, e -> phProperties.restirSoftShadows = e);
         handleBooleanDirective(key, value, RESTIR_COMBINED_GI_KEY, e -> phProperties.restirCombinedGi = e);
+
+        handleEnumDirective(key, value, REGIR_MODE_KEY, ReGIRMode.class, e -> phProperties.reGIRMode = e);
+        handleEnumDirective(
+                key,
+                value,
+                REGIR_LOCAL_LIGHT_PRESAMPLING_MODE_KEY,
+                ReGIRLocalLightPresamplingMode.class,
+                e -> phProperties.reGIRLocalLightPresamplingMode = e
+        );
+        handleEnumDirective(
+                key,
+                value,
+                REGIR_LOCAL_LIGHT_FALLBACK_MODE_KEY,
+                ReGIRLocalLightFallbackMode.class,
+                e -> phProperties.reGIRLocalLightFallbackMode = e
+        );
+        handleRangedIntDirective(
+                key,
+                value,
+                REGIR_GRID_SIZE_X_KEY,
+                SUPPORTED_GRID_AXIS_MIN,
+                PORTABLE_UI_GRID_AXIS_MAX,
+                e -> phProperties.reGIRGridSizeX = e
+        );
+        handleRangedIntDirective(
+                key,
+                value,
+                REGIR_GRID_SIZE_Y_KEY,
+                SUPPORTED_GRID_AXIS_MIN,
+                PORTABLE_UI_GRID_AXIS_MAX,
+                e -> phProperties.reGIRGridSizeY = e
+        );
+        handleRangedIntDirective(
+                key,
+                value,
+                REGIR_GRID_SIZE_Z_KEY,
+                SUPPORTED_GRID_AXIS_MIN,
+                PORTABLE_UI_GRID_AXIS_MAX,
+                e -> phProperties.reGIRGridSizeZ = e
+        );
+        handleRangedIntDirective(key, value, REGIR_ONION_DETAIL_LAYERS_KEY, 0, 8, e -> phProperties.reGIROnionDetailLayers = e);
+        handleRangedIntDirective(key, value, REGIR_ONION_COVERAGE_LAYERS_KEY, 0, 64, e -> phProperties.reGIROnionCoverageLayers = e);
+        handleRangedIntDirective(
+                key,
+                value,
+                REGIR_LIGHTS_PER_CELL_KEY,
+                SUPPORTED_LIGHTS_PER_CELL_MIN,
+                PORTABLE_UI_LIGHTS_PER_CELL_MAX,
+                e -> phProperties.reGIRLightsPerCell = e
+        );
+        handleRangedFloatDirective(key, value, REGIR_CELL_SIZE_KEY, Float.MIN_NORMAL, Float.MAX_VALUE, e -> phProperties.reGIRCellSize = e);
+        handleRangedFloatDirective(key, value, REGIR_SAMPLING_JITTER_KEY, 0.0f, Float.MAX_VALUE, e -> phProperties.reGIRSamplingJitter = e);
+        handleRangedIntDirective(key, value, REGIR_BUILD_SAMPLES_KEY, 0, 64, e -> phProperties.reGIRBuildSamples = e);
     }
 
     @Unique
@@ -150,6 +227,81 @@ public abstract class ShaderPropertiesMixin {
 
             return true;
         }
+    }
+
+    @Unique
+    private static boolean handleRangedIntDirective(
+            String key,
+            String value,
+            String expectedKey,
+            int min,
+            int max,
+            Consumer<Integer> handler
+    ) {
+        if (!expectedKey.equals(key)) {
+            return false;
+        }
+
+        try {
+            int result = Integer.parseInt(value);
+            if (result < min || result > max) {
+                throw new NumberFormatException("Value outside range");
+            }
+            handler.accept(result);
+        } catch (NumberFormatException exception) {
+            Iris.logger.warn("Unexpected value for " + key + ": got " + value +
+                    ", but expected an integer in [" + min + ", " + max + "]");
+        }
+
+        return true;
+    }
+
+    @Unique
+    private static boolean handleRangedFloatDirective(
+            String key,
+            String value,
+            String expectedKey,
+            float min,
+            float max,
+            Consumer<Float> handler
+    ) {
+        if (!expectedKey.equals(key)) {
+            return false;
+        }
+
+        try {
+            float result = Float.parseFloat(value);
+            if (!Float.isFinite(result) || result < min || result > max) {
+                throw new NumberFormatException("Value outside range");
+            }
+            handler.accept(result);
+        } catch (NumberFormatException exception) {
+            Iris.logger.warn("Unexpected value for " + key + ": got " + value +
+                    ", but expected a finite float in [" + min + ", " + max + "]");
+        }
+
+        return true;
+    }
+
+    @Unique
+    private static <T extends Enum<T>> boolean handleEnumDirective(
+            String key,
+            String value,
+            String expectedKey,
+            Class<T> type,
+            Consumer<T> handler
+    ) {
+        if (!expectedKey.equals(key)) {
+            return false;
+        }
+
+        try {
+            handler.accept(Enum.valueOf(type, value.toUpperCase()));
+        } catch (IllegalArgumentException exception) {
+            Iris.logger.warn("Unexpected value for " + key + ": got " + value);
+        }
+
+        return true;
     }
 
     @Unique

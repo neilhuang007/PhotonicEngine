@@ -7,6 +7,7 @@ option.PHOTONICS_ENABLED = §e♦ §rUse Photonics
 option.PHOTONICS_ENABLED.comment       = Should Photonics be used in this shaderpack?
 
 screen.photonics = §e♦ §rPhotonics Options
+screen.photonics_regir = §e♦ §rReGIR Options
 
 option.ALPHA_MODE = §e♦ §rTransparency Mode
 option.ALPHA_MODE.comment = Sets how Photonics handles transparent blocks.\n\nNone - Transparent blocks are treated as opaque\nBlock - Transparency is applied per block (§aMinimal performance impact§r)\nVoxel - Transparency is applied per voxel (§cHIGH PERFORMANCE IMPACT§r)
@@ -24,7 +25,7 @@ value.SEPARATE_HANDHELD_RAYS.false = §fOff
 value.SEPARATE_HANDHELD_RAYS.true = §aOn
 
 option.LIGHTING_MODE = §e♦ §rLighting Mode
-option.LIGHTING_MODE.comment = Changes the lighting algorithm Photonics uses for lighting.\n\nSimple - A very simple lighting algorithm with no noise, but a limited number of lights (Max Samples)\nReSTIR - Uses ReSTIR for lighting, supports an unlimited (Max Lights) number of lights, but may be noisy in certain areas.
+option.LIGHTING_MODE.comment = Changes the lighting algorithm Photonics uses.\n\nSimple - Deterministic nearby-light sampling limited by Max Basic Sample Count\nReSTIR - Reservoir resampling across Max Lights, with ReGIR spatial light presampling
 value.LIGHTING_MODE.BASIC = Simple
 value.LIGHTING_MODE.RESTIR = ReSTIR
 
@@ -51,6 +52,49 @@ option.RESTIR_DENOISER_PASSES = ReSTIR Denoiser Passes
 option.RESTIR_DENOISER_PASSES.comment = The number of passes the denoiser for ReSTIR uses\n\n§eMedium performance impact
 
 value.RESTIR_DENOISER_PASSES.0 = Off
+
+option.REGIR_MODE = ReGIR Spatial Structure
+option.REGIR_MODE.comment = Selects the RTXDI ReGIR spatial structure used to presample lights.\n\nGrid - A fixed camera-centered 3D grid\nOnion - Cascaded spherical layers around the camera\nDisabled - Initial light candidates are sampled without ReGIR
+value.REGIR_MODE.DISABLED = Disabled
+value.REGIR_MODE.GRID = Grid
+value.REGIR_MODE.ONION = Onion
+
+option.REGIR_LOCAL_LIGHT_PRESAMPLING_MODE = Local Light Presampling
+option.REGIR_LOCAL_LIGHT_PRESAMPLING_MODE.comment = Selects how lights are written into the local presampling table.\n\nUniform - Equal candidate probability\nPower RIS - Importance samples candidates using emitted power
+value.REGIR_LOCAL_LIGHT_PRESAMPLING_MODE.UNIFORM = Uniform
+value.REGIR_LOCAL_LIGHT_PRESAMPLING_MODE.POWER_RIS = Power RIS
+
+option.REGIR_LOCAL_LIGHT_SAMPLING_FALLBACK_MODE = Local Sampling Fallback
+option.REGIR_LOCAL_LIGHT_SAMPLING_FALLBACK_MODE.comment = Selects the proposal used when the jittered surface position falls outside ReGIR coverage.\n\nUniform - Equal light probability\nPower RIS - Importance samples lights using emitted power
+value.REGIR_LOCAL_LIGHT_SAMPLING_FALLBACK_MODE.UNIFORM = Uniform
+value.REGIR_LOCAL_LIGHT_SAMPLING_FALLBACK_MODE.POWER_RIS = Power RIS
+
+option.REGIR_GRID_SIZE_X = ReGIR Grid Width
+option.REGIR_GRID_SIZE_X.comment = Number of cells along the ReGIR grid's X axis. Only used in Grid mode.\n\nThe independent grid and light-count controls are capped so every displayed combination fits OpenGL's portable 128 MiB shader-storage-block limit.
+
+option.REGIR_GRID_SIZE_Y = ReGIR Grid Height
+option.REGIR_GRID_SIZE_Y.comment = Number of cells along the ReGIR grid's Y axis. Only used in Grid mode.\n\nThe independent grid and light-count controls are capped so every displayed combination fits OpenGL's portable 128 MiB shader-storage-block limit.
+
+option.REGIR_GRID_SIZE_Z = ReGIR Grid Depth
+option.REGIR_GRID_SIZE_Z.comment = Number of cells along the ReGIR grid's Z axis. Only used in Grid mode.\n\nThe independent grid and light-count controls are capped so every displayed combination fits OpenGL's portable 128 MiB shader-storage-block limit.
+
+option.REGIR_ONION_DETAIL_LAYERS = ReGIR Detail Layers
+option.REGIR_ONION_DETAIL_LAYERS.comment = Number of high-detail inner layers in the ReGIR onion. Only used in Onion mode.
+
+option.REGIR_ONION_COVERAGE_LAYERS = ReGIR Coverage Layers
+option.REGIR_ONION_COVERAGE_LAYERS.comment = Number of lower-detail outer coverage layers in the ReGIR onion. Only used in Onion mode.
+
+option.REGIR_LIGHTS_PER_CELL = ReGIR Lights Per Cell
+option.REGIR_LIGHTS_PER_CELL.comment = Number of presampled light slots stored in each ReGIR cell.\n\nThe displayed maximum keeps every grid-size combination within OpenGL's portable 128 MiB shader-storage-block limit. The runtime also clamps this value to the GPU's reported limit without disabling ReGIR.\n\n§cHigh values increase memory use and build cost
+
+option.REGIR_CELL_SIZE = ReGIR Cell Size
+option.REGIR_CELL_SIZE.comment = World-space grid cell size. In Onion mode this controls the diameter of the smallest cells.
+
+option.REGIR_SAMPLING_JITTER = ReGIR Sampling Jitter
+option.REGIR_SAMPLING_JITTER.comment = Randomizes lookup positions within ReGIR cells to reduce visible cell boundaries. Zero disables jitter.
+
+option.REGIR_BUILD_SAMPLES = ReGIR Build Samples
+option.REGIR_BUILD_SAMPLES.comment = Number of light candidates considered when building each ReGIR reservoir.\n\n§eMedium performance impact
 
 option.MAX_LIGHTS = §e♦ §rMax Lights
 option.MAX_LIGHTS.comment = The max number of traced lights that can be loaded\n\n§eMedium performance impact

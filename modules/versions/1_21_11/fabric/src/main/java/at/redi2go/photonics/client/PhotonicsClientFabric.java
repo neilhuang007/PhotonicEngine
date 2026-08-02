@@ -27,5 +27,7 @@ public class PhotonicsClientFabric implements ClientModInitializer {
         } catch(URISyntaxException e) {
             throw new IllegalStateException(e);
         }
+
+        ShaderGameTestReporter.registerIfRequested();
     }
 }

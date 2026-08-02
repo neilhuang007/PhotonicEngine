@@ -69,8 +69,11 @@ public class PhotonicsRenderer extends CompositeRenderer {
         );
 
         this.name = name;
-        for (CompositeRendererPassExt pass : getPasses())
-            pass.setFramebuffer(passes.get(pass.index()).framebuffer());
+        for (CompositeRendererPassExt pass : getPasses()) {
+            var sourcePass = passes.get(pass.index());
+            if (sourcePass instanceof DeferredIrisRenderer.DeferredPass deferredPass)
+                pass.setFramebuffer(deferredPass.framebuffer());
+        }
     }
 
     public String getName() {

@@ -39,11 +39,34 @@ public class IrisRendererBuilder implements PipelineActionBuilder {
         if (finished) return false;
 
         passes.add(
-                new DeferredIrisRenderer.Pass(
+                new DeferredIrisRenderer.DeferredPass(
                         name,
                         fragmentShader,
                         vertexShader == null ? "/photonics/rendering/screen.vsh" : vertexShader,
                         framebuffer
+                )
+        );
+
+        return true;
+    }
+
+    @Override
+    public boolean addComputePass(
+            String name,
+            @Nullable String computeShader,
+            int workGroupsX,
+            int workGroupsY,
+            int workGroupsZ
+    ) {
+        if (finished) return false;
+
+        passes.add(
+                new DeferredIrisRenderer.ComputePass(
+                        name,
+                        computeShader,
+                        workGroupsX,
+                        workGroupsY,
+                        workGroupsZ
                 )
         );
 

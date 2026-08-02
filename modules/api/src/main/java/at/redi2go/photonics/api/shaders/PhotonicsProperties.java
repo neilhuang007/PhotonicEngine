@@ -4,6 +4,7 @@ public interface PhotonicsProperties {
     boolean isPhotonicsEnabled();
     boolean DEFAULT_ENABLED = false;
     String ENABLED_KEY = "photonics.enabled";
+    String SUPPORTED_KEY = "photonics.supported";
 
     float getRenderScale();
     float DEFAULT_RENDER_SCALE = 1f;
@@ -83,6 +84,56 @@ public interface PhotonicsProperties {
     String RESTIR_COMBINED_GI_KEY = "photonics.restirCombinedGi";
 
     int getRestirDenoiserPasses();
-    int DEFAULT_RESTIR_DENOISER_PASSES = 5;
+    int DEFAULT_RESTIR_DENOISER_PASSES = 7;
     String RESTIR_DENOISER_PASSES_KEY = "photonics.restirDenoiserPasses";
+
+    ReGIRMode getReGIRMode();
+    ReGIRMode DEFAULT_REGIR_MODE = ReGIRMode.ONION;
+    String REGIR_MODE_KEY = "photonics.regir.mode";
+
+    ReGIRLocalLightPresamplingMode getReGIRLocalLightPresamplingMode();
+    ReGIRLocalLightPresamplingMode DEFAULT_REGIR_LOCAL_LIGHT_PRESAMPLING_MODE =
+            ReGIRLocalLightPresamplingMode.POWER_RIS;
+    String REGIR_LOCAL_LIGHT_PRESAMPLING_MODE_KEY = "photonics.regir.localLightPresamplingMode";
+
+    ReGIRLocalLightFallbackMode getReGIRLocalLightFallbackMode();
+    ReGIRLocalLightFallbackMode DEFAULT_REGIR_LOCAL_LIGHT_FALLBACK_MODE =
+            ReGIRLocalLightFallbackMode.POWER_RIS;
+    String REGIR_LOCAL_LIGHT_FALLBACK_MODE_KEY = "photonics.regir.localLightSamplingFallbackMode";
+
+    int getReGIRGridSizeX();
+    int DEFAULT_REGIR_GRID_SIZE_X = 16;
+    String REGIR_GRID_SIZE_X_KEY = "photonics.regir.gridSizeX";
+
+    int getReGIRGridSizeY();
+    int DEFAULT_REGIR_GRID_SIZE_Y = 16;
+    String REGIR_GRID_SIZE_Y_KEY = "photonics.regir.gridSizeY";
+
+    int getReGIRGridSizeZ();
+    int DEFAULT_REGIR_GRID_SIZE_Z = 16;
+    String REGIR_GRID_SIZE_Z_KEY = "photonics.regir.gridSizeZ";
+
+    int getReGIROnionDetailLayers();
+    int DEFAULT_REGIR_ONION_DETAIL_LAYERS = 5;
+    String REGIR_ONION_DETAIL_LAYERS_KEY = "photonics.regir.onionDetailLayers";
+
+    int getReGIROnionCoverageLayers();
+    int DEFAULT_REGIR_ONION_COVERAGE_LAYERS = 10;
+    String REGIR_ONION_COVERAGE_LAYERS_KEY = "photonics.regir.onionCoverageLayers";
+
+    int getReGIRLightsPerCell();
+    int DEFAULT_REGIR_LIGHTS_PER_CELL = 512;
+    String REGIR_LIGHTS_PER_CELL_KEY = "photonics.regir.lightsPerCell";
+
+    float getReGIRCellSize();
+    float DEFAULT_REGIR_CELL_SIZE = 1.0f;
+    String REGIR_CELL_SIZE_KEY = "photonics.regir.cellSize";
+
+    float getReGIRSamplingJitter();
+    float DEFAULT_REGIR_SAMPLING_JITTER = 1.0f;
+    String REGIR_SAMPLING_JITTER_KEY = "photonics.regir.samplingJitter";
+
+    int getReGIRBuildSamples();
+    int DEFAULT_REGIR_BUILD_SAMPLES = 8;
+    String REGIR_BUILD_SAMPLES_KEY = "photonics.regir.buildSamples";
 }

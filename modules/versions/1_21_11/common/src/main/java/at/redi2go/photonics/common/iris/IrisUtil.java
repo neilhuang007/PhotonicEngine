@@ -10,6 +10,7 @@ import at.redi2go.photonics.common.mixins.iris.pipeline.sampler.GlSamplerAccesso
 import at.redi2go.photonics.core.iris.PhotonicsExtension;
 import at.redi2go.photonics.impl.mc.blaze3d.opengl.textures.AbstractGlTexture;
 import it.unimi.dsi.fastutil.ints.IntSet;
+import it.unimi.dsi.fastutil.ints.IntSets;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.gl.sampler.GlSampler;
 import net.irisshaders.iris.gl.texture.TextureType;
@@ -36,12 +37,14 @@ public class IrisUtil {
     }
 
     public static IntSet getUsedBuffers() {
-        return IntSet.of();
+        return Iris.getCurrentPack()
+                .map(pack -> pack.getBufferObjects().keySet())
+                .orElseGet(IntSets::emptySet);
     }
 
     public static void bindBuffers(@Nullable WorldRenderingPipeline pipeline, int programId) {
         if (pipeline instanceof IrisRenderingPipeline ext)
-            ((IrisRenderingPipelineExt) ext).photonics$bufferHolder().bind(programId, IrisUtil.getUsedBuffers());
+            ((IrisRenderingPipelineExt) ext).photonics$bufferHolder().bind(programId);
     }
 
     public static void bindBuffers(int programId) {

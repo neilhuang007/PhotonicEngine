@@ -43,6 +43,19 @@ public record RepeatAction(
         }
 
         @Override
+        public boolean addComputePass(
+                String name,
+                @Nullable String computeShader,
+                int workGroupsX,
+                int workGroupsY,
+                int workGroupsZ
+        ) {
+            if (hasEnded) return false;
+
+            return super.addComputePass(name, computeShader, workGroupsX, workGroupsY, workGroupsZ);
+        }
+
+        @Override
         public boolean addThenFlip(IrisFramebuffer... framebuffers) {
             if (hasEnded) return false;
 

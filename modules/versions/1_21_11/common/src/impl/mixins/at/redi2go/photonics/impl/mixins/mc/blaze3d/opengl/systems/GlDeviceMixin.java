@@ -25,6 +25,8 @@ import org.joml.Vector2fc;
 import org.joml.Vector2i;
 import org.joml.Vector3i;
 import org.jspecify.annotations.Nullable;
+import org.lwjgl.opengl.GL32C;
+import org.lwjgl.opengl.GL43C;
 import org.spongepowered.asm.mixin.Implements;
 import org.spongepowered.asm.mixin.Interface;
 import org.spongepowered.asm.mixin.Mixin;
@@ -37,6 +39,11 @@ public abstract class GlDeviceMixin implements GpuDevice, GpuDeviceImpl, IGpuDev
     @Override
     public ICommandEncoder ph$createCommandEncoder() {
         return (ICommandEncoder) createCommandEncoder();
+    }
+
+    @Override
+    public long ph$getMaxShaderStorageBlockSize() {
+        return GL32C.glGetInteger64(GL43C.GL_MAX_SHADER_STORAGE_BLOCK_SIZE);
     }
 
     @Override

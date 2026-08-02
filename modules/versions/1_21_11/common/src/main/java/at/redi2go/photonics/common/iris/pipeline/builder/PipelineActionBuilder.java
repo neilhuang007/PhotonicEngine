@@ -13,6 +13,16 @@ public interface PipelineActionBuilder {
         return false;
     }
 
+    default boolean addComputePass(
+            String name,
+            @Nullable String computeShader,
+            int workGroupsX,
+            int workGroupsY,
+            int workGroupsZ
+    ) {
+        return false;
+    }
+
     default boolean addThenFlip(IrisFramebuffer... framebuffers) {
         return false;
     }

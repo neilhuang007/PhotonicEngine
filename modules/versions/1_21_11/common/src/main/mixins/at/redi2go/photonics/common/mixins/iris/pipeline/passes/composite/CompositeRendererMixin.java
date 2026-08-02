@@ -29,9 +29,11 @@ public abstract class CompositeRendererMixin {
             method = "<init>",
             at = @At(
                     value = "INVOKE",
-                    target = "Lcom/google/common/collect/ImmutableList$Builder;add(Ljava/lang/Object;)Lcom/google/common/collect/ImmutableList$Builder;",
-                    ordinal = 1
-            )
+                    target = "Lcom/google/common/collect/ImmutableList$Builder;add(Ljava/lang/Object;)Lcom/google/common/collect/ImmutableList$Builder;"
+            ),
+            require = 2,
+            expect = 2,
+            allow = 2
     )
     private ImmutableList.Builder<Object> addPass(
             ImmutableList.Builder<Object> instance,

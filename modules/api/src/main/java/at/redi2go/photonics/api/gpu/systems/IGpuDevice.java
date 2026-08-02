@@ -18,6 +18,11 @@ import java.util.function.Supplier;
 public interface IGpuDevice {
     ICommandEncoder ph$createCommandEncoder();
 
+    /**
+     * Maximum byte range that can be bound as one shader storage block.
+     */
+    long ph$getMaxShaderStorageBlockSize();
+
     IGpuSampler ph$createSampler(
         IAddressMode addressModeU,
         IAddressMode addressModeV,
