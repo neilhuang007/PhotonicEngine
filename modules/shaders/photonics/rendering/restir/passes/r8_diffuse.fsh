@@ -46,6 +46,23 @@ void main() {
 #if defined PH_ENABLE_BLOCKLIGHT
     // DIRECT LIGHTING
 
+    if (!frag_is_hand) {
+        vec3 surface_position = frag_player_pos + rt_camera_position;
+        vec3 interior_position = surface_position - frag_geo_normal * 0.01f;
+
+        RayIterator primary_ray;
+        ray_iter_begin(primary_ray, interior_position, -frag_geo_normal);
+
+        RayResult primary_hit = ray_iter_next_block(
+            primary_ray,
+            floor(interior_position) + 0.5f
+        );
+        Light primary_light = ray_result_light_data(primary_hit);
+        if (light_is_valid(primary_light)) {
+            lighting.rgb += primary_light.color * get_exposure();
+        }
+    }
+
     DirectReservoir direct_reservoir = direct_reservoir_empty();
     direct_reservoir_load_previous(direct_reservoir, frag_tex_coord, false);
 

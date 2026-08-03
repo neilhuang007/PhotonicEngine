@@ -109,6 +109,45 @@ float direct_sample_get_weight(
     return direct_sample_weight(color);
 }
 
+bool direct_sample_get_visible_color(
+    DirectSample smple,
+    vec3 sample_pos,
+    vec3 geo_normal,
+    vec3 tex_normal,
+    out vec3 color
+) {
+    color = vec3(0.0f);
+    if (direct_sample_is_empty(smple)) return false;
+
+    Light light = direct_sample_get_light(smple);
+    if (!light_is_valid(light)) return false;
+
+    vec3 light_position = direct_sample_get_position(
+        smple,
+        light,
+        sample_pos
+    );
+    vec3 tint_color;
+    float transmittance;
+    if (!trace_light_vis(
+            sample_pos,
+            light_position - sample_pos,
+            light_position,
+            40,
+            tint_color,
+            transmittance
+    )) return false;
+
+    color = direct_sample_get_color(
+        smple,
+        light,
+        sample_pos,
+        geo_normal,
+        tex_normal
+    ) * tint_color * transmittance;
+    return true;
+}
+
 bool direct_sample_reproject(inout DirectSample smple) {
     if (smple.light_index < 0) return false;
 

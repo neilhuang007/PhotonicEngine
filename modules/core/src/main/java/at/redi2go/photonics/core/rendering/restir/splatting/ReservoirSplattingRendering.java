@@ -12,20 +12,15 @@ import java.util.Objects;
 import java.util.function.BooleanSupplier;
 
 /**
- * Owns the screen-sized buffers and compute stages used to bin exact
- * single-splat reservoir reprojections.
- *
- * <p>This component intentionally stops at the adaptation boundary. The pass
- * shaders will consume full path reservoirs and reconnection data once the
- * complete algorithm is installed; no legacy GI reservoir is adapted here.</p>
+ * Owns the screen-sized buffers and compute stages used by the single-splat
+ * temporal reuse mode.
  */
 public final class ReservoirSplattingRendering implements RenderingComponent {
     public static final int PIXEL_LOCAL_SIZE_X = 16;
     public static final int PIXEL_LOCAL_SIZE_Y = 16;
-    public static final int SORT_LOCAL_SIZE_X = 256;
 
-    public static final float FULL_VIEW_WIDTH_SCALE = 1.0f;
-    public static final float FULL_VIEW_HEIGHT_SCALE = 1.0f;
+    public static final float FULL_VIEW_WIDTH_SCALE = 1.0f / PIXEL_LOCAL_SIZE_X;
+    public static final float FULL_VIEW_HEIGHT_SCALE = 1.0f / PIXEL_LOCAL_SIZE_Y;
 
     public static final String CLEAR_SHADER =
             "/photonics/rendering/restir/reservoir_splatting/passes/p0_clear_bins.csh";
@@ -39,6 +34,12 @@ public final class ReservoirSplattingRendering implements RenderingComponent {
     public static final String COUNTERS_BUFFER_NAME = "ph_reservoir_splatting_counters";
     public static final String APPEND_BUFFER_NAME = "ph_reservoir_splatting_append";
     public static final String SORTED_BUFFER_NAME = "ph_reservoir_splatting_sorted";
+    public static final String PREVIOUS_RECONNECTION_BUFFER_NAME =
+            "ph_direct_previous_reconnections";
+    public static final String CURRENT_RECONNECTION_BUFFER_NAME =
+            "ph_direct_current_reconnections";
+    public static final String SPATIAL_RECONNECTION_BUFFER_NAME =
+            "ph_direct_spatial_reconnections";
 
     private final IGpuDevice device;
     private final IrisFramebuffer viewportSource;
@@ -48,6 +49,9 @@ public final class ReservoirSplattingRendering implements RenderingComponent {
     private IGpuBuffer countersBuffer;
     private IGpuBuffer appendBuffer;
     private IGpuBuffer sortedBuffer;
+    private IGpuBuffer previousReconnectionBuffer;
+    private IGpuBuffer currentReconnectionBuffer;
+    private IGpuBuffer spatialReconnectionBuffer;
     private boolean closed;
 
     public ReservoirSplattingRendering(IrisFramebuffer viewportSource) {
@@ -72,8 +76,8 @@ public final class ReservoirSplattingRendering implements RenderingComponent {
     /**
      * Inserts the four ordered binning stages. Iris places an SSBO memory
      * barrier between each compute pass. All stages dispatch over the complete
-     * view; shaders must reject padded invocations before accessing the packed
-     * buffers. The 256x1 sort stage must flatten both dispatch axes.
+     * view; shaders reject padded invocations before accessing the packed
+     * buffers.
      */
     public IrisPipeline.Builder addPasses(
             IrisPipeline.Builder builder,
@@ -114,6 +118,10 @@ public final class ReservoirSplattingRendering implements RenderingComponent {
     public void onFrameBegin() {
         viewportSource.recalculateSizes();
         resizeToViewport();
+
+        IGpuBuffer previous = previousReconnectionBuffer;
+        previousReconnectionBuffer = currentReconnectionBuffer;
+        currentReconnectionBuffer = previous;
     }
 
     @Override
@@ -121,6 +129,18 @@ public final class ReservoirSplattingRendering implements RenderingComponent {
         buffers.addDefaultBuffer(COUNTERS_BUFFER_NAME, () -> countersBuffer);
         buffers.addDefaultBuffer(APPEND_BUFFER_NAME, () -> appendBuffer);
         buffers.addDefaultBuffer(SORTED_BUFFER_NAME, () -> sortedBuffer);
+        buffers.addDefaultBuffer(
+                PREVIOUS_RECONNECTION_BUFFER_NAME,
+                () -> previousReconnectionBuffer
+        );
+        buffers.addDefaultBuffer(
+                CURRENT_RECONNECTION_BUFFER_NAME,
+                () -> currentReconnectionBuffer
+        );
+        buffers.addDefaultBuffer(
+                SPATIAL_RECONNECTION_BUFFER_NAME,
+                () -> spatialReconnectionBuffer
+        );
     }
 
     @Override
@@ -128,9 +148,12 @@ public final class ReservoirSplattingRendering implements RenderingComponent {
         if (closed) return;
         closed = true;
 
-        sortedBuffer.close();
-        appendBuffer.close();
-        countersBuffer.close();
+        closeIfPresent(spatialReconnectionBuffer);
+        closeIfPresent(currentReconnectionBuffer);
+        closeIfPresent(previousReconnectionBuffer);
+        closeIfPresent(sortedBuffer);
+        closeIfPresent(appendBuffer);
+        closeIfPresent(countersBuffer);
     }
 
     private void resizeToViewport() {
@@ -151,6 +174,9 @@ public final class ReservoirSplattingRendering implements RenderingComponent {
         IGpuBuffer newCountersBuffer = null;
         IGpuBuffer newAppendBuffer = null;
         IGpuBuffer newSortedBuffer = null;
+        IGpuBuffer newPreviousReconnectionBuffer = null;
+        IGpuBuffer newCurrentReconnectionBuffer = null;
+        IGpuBuffer newSpatialReconnectionBuffer = null;
         try {
             newCountersBuffer = device.ph$createBuffer(
                     () -> "Photonics Reservoir Splatting Counters",
@@ -167,7 +193,25 @@ public final class ReservoirSplattingRendering implements RenderingComponent {
                     newLayout.sortedByteSize(),
                     0
             );
+            newPreviousReconnectionBuffer = device.ph$createBuffer(
+                    () -> "Photonics Previous Direct Reconnection Data",
+                    newLayout.reconnectionByteSize(),
+                    0
+            );
+            newCurrentReconnectionBuffer = device.ph$createBuffer(
+                    () -> "Photonics Current Direct Reconnection Data",
+                    newLayout.reconnectionByteSize(),
+                    0
+            );
+            newSpatialReconnectionBuffer = device.ph$createBuffer(
+                    () -> "Photonics Spatial Direct Reconnection Data",
+                    newLayout.reconnectionByteSize(),
+                    0
+            );
         } catch (RuntimeException | Error exception) {
+            closeIfPresent(newSpatialReconnectionBuffer);
+            closeIfPresent(newCurrentReconnectionBuffer);
+            closeIfPresent(newPreviousReconnectionBuffer);
             closeIfPresent(newSortedBuffer);
             closeIfPresent(newAppendBuffer);
             closeIfPresent(newCountersBuffer);
@@ -177,12 +221,21 @@ public final class ReservoirSplattingRendering implements RenderingComponent {
         IGpuBuffer oldCountersBuffer = countersBuffer;
         IGpuBuffer oldAppendBuffer = appendBuffer;
         IGpuBuffer oldSortedBuffer = sortedBuffer;
+        IGpuBuffer oldPreviousReconnectionBuffer = previousReconnectionBuffer;
+        IGpuBuffer oldCurrentReconnectionBuffer = currentReconnectionBuffer;
+        IGpuBuffer oldSpatialReconnectionBuffer = spatialReconnectionBuffer;
 
         countersBuffer = newCountersBuffer;
         appendBuffer = newAppendBuffer;
         sortedBuffer = newSortedBuffer;
+        previousReconnectionBuffer = newPreviousReconnectionBuffer;
+        currentReconnectionBuffer = newCurrentReconnectionBuffer;
+        spatialReconnectionBuffer = newSpatialReconnectionBuffer;
         layout = newLayout;
 
+        closeIfPresent(oldSpatialReconnectionBuffer);
+        closeIfPresent(oldCurrentReconnectionBuffer);
+        closeIfPresent(oldPreviousReconnectionBuffer);
         closeIfPresent(oldSortedBuffer);
         closeIfPresent(oldAppendBuffer);
         closeIfPresent(oldCountersBuffer);
@@ -191,5 +244,11 @@ public final class ReservoirSplattingRendering implements RenderingComponent {
     private static void closeIfPresent(IGpuBuffer buffer) {
         if (buffer != null)
             buffer.close();
+    }
+
+    public void promoteSpatialOutput() {
+        IGpuBuffer current = currentReconnectionBuffer;
+        currentReconnectionBuffer = spatialReconnectionBuffer;
+        spatialReconnectionBuffer = current;
     }
 }

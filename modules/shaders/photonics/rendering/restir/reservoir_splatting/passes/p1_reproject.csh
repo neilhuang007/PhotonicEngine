@@ -1,0 +1,102 @@
+#version 430
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+#define PH_VIEW_SIZE (vec2(viewWidth, viewHeight) * PH_RENDER_SCALE)
+
+//ph_required: uniform float viewWidth;
+//ph_required: uniform float viewHeight;
+//ph_required: uniform int frameCounter;
+//ph_required: uniform vec3 cameraPosition;
+//ph_required: uniform vec3 previousCameraPosition;
+//ph_required: uniform mat4 gbufferModelView;
+//ph_required: uniform mat4 gbufferProjection;
+//ph_required: uniform sampler2D prev_restir_direct_reservoirs1;
+
+#define PH_VOXEL_COLOR_MODIFIER_DISABLED
+#define PH_LIGHT_MODIFIER_DISABLED
+#define PH_ATTENUATION_MODIFIER_DISABLED
+#include "/photonics/tracing.glsl"
+#include "/photonics/rendering/restir/reservoir_splatting/buffers.glsl"
+#include "/photonics/rendering/restir/reservoir_splatting/reconnection.glsl"
+
+bool project_reconnection_to_current_frame(
+    DirectReconnection reconnection,
+    out vec2 fractional_pixel
+) {
+    vec4 view_position = gbufferModelView * vec4(
+        reconnection.player_pos,
+        1.0f
+    );
+    vec4 clip_position = gbufferProjection * view_position;
+    if (clip_position.w <= 0.0f) return false;
+
+    fractional_pixel = (
+        clip_position.xy / clip_position.w * 0.5f + 0.5f
+    ) * PH_VIEW_SIZE;
+    return all(greaterThanEqual(fractional_pixel, vec2(0.0f))) &&
+            all(lessThan(fractional_pixel, PH_VIEW_SIZE));
+}
+
+bool current_camera_sees_primary_hit(DirectReconnection reconnection) {
+    vec3 primary_rt_pos = direct_reconnection_visibility_target(reconnection);
+    vec3 unused_tint;
+    float unused_transmittance;
+    return trace_light_vis(
+        rt_camera_position,
+        primary_rt_pos - rt_camera_position,
+        primary_rt_pos,
+        100,
+        unused_tint,
+        unused_transmittance
+    );
+}
+
+void main() {
+    if (frameCounter == 0) return;
+
+    ivec2 source_pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (!ph_splat_pixel_in_bounds(source_pixel)) return;
+
+    float previous_target_pdf = texelFetch(
+        prev_restir_direct_reservoirs1,
+        source_pixel,
+        0
+    ).g;
+    if (previous_target_pdf == 0.0f) return;
+
+    uint source_index = ph_splat_pixel_index(source_pixel);
+    DirectReconnection reconnection = direct_reconnection_load_previous(
+        source_index
+    );
+    if (!direct_reconnection_is_in_world(reconnection) ||
+            direct_reconnection_is_hand(reconnection)) return;
+
+    vec2 fractional_pixel;
+    if (!project_reconnection_to_current_frame(
+            reconnection,
+            fractional_pixel
+    )) return;
+    if (!current_camera_sees_primary_hit(reconnection)) return;
+
+    uint target_cell = ph_splat_pixel_index(ivec2(floor(fractional_pixel)));
+    uint append_index = atomicAdd(
+        ph_reservoir_splatting_counter_words[ph_splat_data_count_word],
+        1u
+    );
+    uint local_cell_index = atomicAdd(
+        ph_reservoir_splatting_counter_words[
+            ph_splat_cell_counter_word_offset + target_cell
+        ],
+        1u
+    );
+
+    uint metadata_offset = append_index * 2u;
+    ph_reservoir_splatting_append_words[metadata_offset] = target_cell;
+    ph_reservoir_splatting_append_words[
+        metadata_offset + 1u
+    ] = local_cell_index;
+    ph_reservoir_splatting_append_words[
+        ph_splat_pixel_count() * 2u + append_index
+    ] = source_index;
+}

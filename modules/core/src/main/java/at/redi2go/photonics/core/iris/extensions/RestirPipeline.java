@@ -13,6 +13,7 @@ import at.redi2go.photonics.core.rendering.UniformUpdater;
 import at.redi2go.photonics.core.rendering.lights.HandheldItemSupplier;
 import at.redi2go.photonics.core.rendering.restir.power.LightPowerSampler;
 import at.redi2go.photonics.core.rendering.restir.regir.ReGIRRendering;
+import at.redi2go.photonics.core.rendering.restir.splatting.ReservoirSplattingRendering;
 import at.redi2go.photonics.core.rendering.world.bakery.texture.AtlasDownloader;
 
 import static at.redi2go.photonics.core.iris.pipeline.texture.AttachmentUsage.CREATE_PREV_SAMPLER;
@@ -51,7 +52,11 @@ public class RestirPipeline extends AbstractPhotonicsExtension {
                 .addAttachment("restir_direct_reservoirs1", ITextureFormat.rgb32f(), FLIP | CREATE_SAMPLER | CREATE_PREV_SAMPLER, this::isBlockLightEnabled)
                 .addAttachment("restir_indirect_reservoirs0", ITextureFormat.rgba32f(), FLIP | CREATE_SAMPLER | CREATE_PREV_SAMPLER, this::isRestirGiEnabled)
                 .addAttachment("restir_indirect_reservoirs1", ITextureFormat.rgb32ui(), FLIP | CREATE_SAMPLER | CREATE_PREV_SAMPLER, this::isRestirGiEnabled)
+                .addAttachment("restir_direct_candidates", ITextureFormat.rgba32f(), CREATE_SAMPLER, this::isBlockLightEnabled)
                 .build(this::registerComponent);
+        var reservoirSplatting = registerComponent(
+                new ReservoirSplattingRendering(restirFramebuffer)
+        );
 
         var denoiseFramebuffer = irisFactory.newFramebuffer(properties.getRenderScale())
                 .addAttachment("denoise_result", ITextureFormat.rgba32ui(), FLIP | CREATE_SAMPLER | CREATE_PREV_SAMPLER, this::isDenoisingEnabled)
@@ -70,7 +75,7 @@ public class RestirPipeline extends AbstractPhotonicsExtension {
                 .deferredPass("load neighbor data", "/photonics/rendering/restir/passes/r0_load_neighbor_data.fsh", null, this::isSpatialReuseEnabled)
                 .deferredPass("neighbor selection", "/photonics/rendering/restir/passes/r1_neighbor_selection.fsh", null, this::isSpatialReuseEnabled);
 
-        lightPowerSampler.addPreparationPasses(
+        var restirSamplingPipeline = lightPowerSampler.addPreparationPasses(
                 restirPipeline,
                 this::isPowerRISPreparationEnabled
         )
@@ -83,11 +88,16 @@ public class RestirPipeline extends AbstractPhotonicsExtension {
                         this::isReGIREnabled
                 )
                 .deferredPass("initial direct", "/photonics/rendering/restir/passes/r2_initial_direct.fsh", null, this::isBlockLightEnabled)
-                .deferredPass("validate initial direct", "/photonics/rendering/restir/passes/r3_validate_initial_direct.fsh", null, this::isBlockLightEnabled)
-                .deferredPass("initial indirect", "/photonics/rendering/restir/passes/r4_initial_indirect.fsh", null, this::isRestirGiEnabled)
+                .deferredPass("initial indirect", "/photonics/rendering/restir/passes/r4_initial_indirect.fsh", null, this::isRestirGiEnabled);
+
+        reservoirSplatting.addPasses(
+                restirSamplingPipeline,
+                this::isBlockLightEnabled
+        )
                 .deferredPass("temporal reuse", "/photonics/rendering/restir/passes/r5_temporal_reuse.fsh", null, this::isRestirEnabled)
                 .thenFlip(this::isSpatialReuseEnabled, restirFramebuffer)
                 .deferredPass("spatial reuse", "/photonics/rendering/restir/passes/r6_spatial_reuse.fsh", null, this::isSpatialReuseEnabled)
+                .thenRun(reservoirSplatting::promoteSpatialOutput, this::isSpatialReuseEnabled)
                 .thenFlip(this::isSpatialReuseEnabled, restirFramebuffer)
                 .deferredPass("validate indirect", "/photonics/rendering/restir/passes/r7_validate_indirect.fsh", null, this::isRestirGiEnabled)
                 .deferredPass("diffuse", "/photonics/rendering/restir/passes/r8_diffuse.fsh", null, this::isRestirEnabled)

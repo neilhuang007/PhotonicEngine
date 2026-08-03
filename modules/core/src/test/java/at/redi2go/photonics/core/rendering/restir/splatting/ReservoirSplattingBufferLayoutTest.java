@@ -11,7 +11,7 @@ class ReservoirSplattingBufferLayoutTest {
     @Test
     void allocatesOneExactRecordAtMinimumViewportSize() {
         ReservoirSplattingBufferLayout layout =
-                ReservoirSplattingBufferLayout.plan(1, 1, 12);
+                ReservoirSplattingBufferLayout.plan(1, 1, 32);
 
         assertEquals(1, layout.pixelCount());
 
@@ -25,6 +25,7 @@ class ReservoirSplattingBufferLayoutTest {
         assertEquals(8, layout.sortedByteSize());
         assertEquals(0, layout.cellOffsetsByteOffset());
         assertEquals(4, layout.sortedSourceIdsByteOffset());
+        assertEquals(32, layout.reconnectionByteSize());
     }
 
     @Test
@@ -36,6 +37,7 @@ class ReservoirSplattingBufferLayoutTest {
         assertEquals(8_294_408, layout.countersByteSize());
         assertEquals(24_883_200, layout.appendByteSize());
         assertEquals(16_588_800, layout.sortedByteSize());
+        assertEquals(66_355_200, layout.reconnectionByteSize());
         assertEquals(16_588_800, layout.appendSourceIdsByteOffset());
         assertEquals(8_294_400, layout.sortedSourceIdsByteOffset());
     }
@@ -79,8 +81,7 @@ class ReservoirSplattingBufferLayoutTest {
     void usesFalcorCompatiblePixelAndLinearSortDispatches() {
         assertEquals(16, ReservoirSplattingRendering.PIXEL_LOCAL_SIZE_X);
         assertEquals(16, ReservoirSplattingRendering.PIXEL_LOCAL_SIZE_Y);
-        assertEquals(256, ReservoirSplattingRendering.SORT_LOCAL_SIZE_X);
-        assertEquals(1.0f, ReservoirSplattingRendering.FULL_VIEW_WIDTH_SCALE);
-        assertEquals(1.0f, ReservoirSplattingRendering.FULL_VIEW_HEIGHT_SCALE);
+        assertEquals(1.0f / 16.0f, ReservoirSplattingRendering.FULL_VIEW_WIDTH_SCALE);
+        assertEquals(1.0f / 16.0f, ReservoirSplattingRendering.FULL_VIEW_HEIGHT_SCALE);
     }
 }

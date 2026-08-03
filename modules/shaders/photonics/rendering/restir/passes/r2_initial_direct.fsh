@@ -8,8 +8,7 @@
 #include "/photonics/rendering/restir/restir.glsl"
 #include "/photonics/rendering/restir/regir/sampling.glsl"
 
-layout(location = DIRECT_RESERVOIR_0) out uvec2 di_reservoir_0;
-layout(location = DIRECT_RESERVOIR_1) out vec3 di_reservoir_1;
+layout(location = DIRECT_CANDIDATE_RESERVOIR) out vec4 direct_candidate;
 
 void regir_stream_local_light_sample(
     inout DirectReservoir reservoir,
@@ -49,13 +48,8 @@ void regir_stream_local_light_sample(
 }
 
 void regir_finalize_initial_reservoir(inout DirectReservoir reservoir) {
-    direct_reservoir_finalize_weight(reservoir);
-
-    // A completed local-light RIS stage is one effective sample for
-    // subsequent temporal and spatial resampling in RTXDI.
-    if (reservoir.total_samples > 0.0f) {
-        reservoir.total_samples = 1.0f;
-    }
+    direct_reservoir_finalize_initial_candidate(reservoir);
+    direct_reservoir_validate_visibility(reservoir, frag_rt_pos);
 }
 
 void main() {
@@ -111,9 +105,5 @@ void main() {
     }
 
     regir_finalize_initial_reservoir(reservoir);
-    direct_reservoir_encode(
-        reservoir,
-        di_reservoir_0,
-        di_reservoir_1
-    );
+    direct_candidate = direct_reservoir_encode_candidate(reservoir);
 }

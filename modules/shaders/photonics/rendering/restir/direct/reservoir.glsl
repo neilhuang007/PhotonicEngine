@@ -3,21 +3,26 @@
 #define DIRECT_RESERVOIR_0 3
 #define DIRECT_RESERVOIR_1 4
 
+#if defined PH_ENABLE_GI && defined PH_RESTIR_COMBINED_GI
+#define DIRECT_CANDIDATE_RESERVOIR 7
+#else
+#define DIRECT_CANDIDATE_RESERVOIR 5
+#endif
+
 //ph_required: uniform usampler2D restir_direct_reservoirs0;
 //ph_required: uniform sampler2D restir_direct_reservoirs1;
 //ph_required: uniform usampler2D prev_restir_direct_reservoirs0;
 //ph_required: uniform sampler2D prev_restir_direct_reservoirs1;
+//ph_required: uniform sampler2D restir_direct_candidates;
 
 const float max_direct_temporal_samples = 20.0f;
-const float max_direct_reservoir_samples = 128.0f;
 const uint direct_reservoir_light_valid_bit = 0x80000000u;
 const uint direct_reservoir_light_index_mask = 0x7fffffffu;
 
 struct DirectReservoir {
     DirectSample smple;
 
-    // RTXDI weightSum: an unfinalized streaming sum while candidates are
-    // merged, then the selected sample's inverse PDF after finalization.
+    // GRIS totalWeight, selected target value, and confidence respectively.
     float weight_sum;
     float target_pdf;
     float total_samples;
@@ -57,80 +62,90 @@ bool direct_reservoir_stream_sample(
     return false;
 }
 
-bool direct_reservoir_merge(
-    inout DirectReservoir result,
-    DirectReservoir other
+float direct_reservoir_compute_ucw(DirectReservoir reservoir) {
+    return reservoir.target_pdf == 0.0f
+            ? 0.0f
+            : reservoir.weight_sum / reservoir.target_pdf;
+}
+
+void direct_reservoir_finalize_initial_candidate(
+    inout DirectReservoir reservoir
 ) {
-    float target_pdf = direct_sample_get_weight(
-        other.smple,
-        frag_rt_pos,
-        frag_geo_normal,
-        frag_is_hand ? frag_geo_normal : frag_tex_normal
+    if (reservoir.total_samples > 0.0f) {
+        reservoir.weight_sum /= reservoir.total_samples;
+        reservoir.total_samples = 1.0f;
+    }
+}
+
+bool direct_reservoir_add_sample(
+    inout DirectReservoir result,
+    DirectReservoir other,
+    DirectSample shifted_sample,
+    float shifted_target_pdf,
+    float mis_weight,
+    float jacobian,
+    float random
+) {
+    float weight = mis_weight * shifted_target_pdf *
+            direct_reservoir_compute_ucw(other) * jacobian;
+    result.weight_sum += weight;
+    result.total_samples = min(
+        result.total_samples + other.total_samples,
+        max_direct_temporal_samples
     );
 
-    float ris_weight =
-            target_pdf * other.weight_sum * other.total_samples;
-    result.weight_sum += ris_weight;
-    result.total_samples += other.total_samples;
-
-    if (ris_weight > 0.0f &&
-            ph_rand_next_float(frag_rnd_state) * result.weight_sum <
-                    ris_weight) {
-        result.smple = other.smple;
-        result.target_pdf = target_pdf;
+    if (random * result.weight_sum < weight) {
+        result.smple = shifted_sample;
+        result.target_pdf = shifted_target_pdf;
         return true;
     }
 
     return false;
 }
 
-void direct_reservoir_clamp_samples(inout DirectReservoir reservoir) {
-    if (reservoir.total_samples <= max_direct_reservoir_samples) return;
-
-    // This is called on r6's unfinalized streaming sum. Scale the numerator
-    // together with M so the later finalized inverse PDF is unchanged.
-    reservoir.weight_sum *= max_direct_reservoir_samples /
-            reservoir.total_samples;
-    reservoir.total_samples = max_direct_reservoir_samples;
+bool direct_reservoir_merge(
+    inout DirectReservoir result,
+    DirectReservoir other
+) {
+    vec3 shifted_integrand;
+    direct_sample_get_visible_color(
+        other.smple,
+        frag_rt_pos,
+        frag_geo_normal,
+        frag_is_hand ? frag_geo_normal : frag_tex_normal,
+        shifted_integrand
+    );
+    return direct_reservoir_add_sample(
+        result,
+        other,
+        other.smple,
+        direct_sample_weight(shifted_integrand),
+        1.0f,
+        1.0f,
+        ph_rand_next_float(frag_rnd_state)
+    );
 }
 
 void direct_reservoir_validate_visibility(inout DirectReservoir reservoir, vec3 sample_pos) {
     if (direct_sample_is_empty(reservoir.smple)) return;
 
-    Light light = direct_sample_get_light(reservoir.smple);
-    vec3 light_position = direct_sample_get_position(
+    float ucw = direct_reservoir_compute_ucw(reservoir);
+    vec3 integrand;
+    if (!direct_sample_get_visible_color(
         reservoir.smple,
-        light,
-        sample_pos
-    );
-    vec3 to_light = light_position - sample_pos;
-
-    vec3 unused0;
-    float unused1;
-
-    if (!trace_light_vis(
-            sample_pos,
-            to_light,
-            light_position,
-            40,
-            unused0,
-            unused1
+        sample_pos,
+        frag_geo_normal,
+        frag_is_hand ? frag_geo_normal : frag_tex_normal,
+        integrand
     )) {
         reservoir.smple = direct_sample_empty();
         reservoir.target_pdf = 0.0f;
         reservoir.weight_sum = 0.0f;
-    }
-}
-
-void direct_reservoir_finalize_weight(inout DirectReservoir reservoir) {
-    float denominator =
-            reservoir.target_pdf * reservoir.total_samples;
-    if (!(denominator > 0.0f)) {
-        reservoir.weight_sum = 0.0f;
         return;
     }
 
-    reservoir.weight_sum /= denominator;
+    reservoir.target_pdf = direct_sample_weight(integrand);
+    reservoir.weight_sum = reservoir.target_pdf * ucw;
 }
 
 vec3 direct_reservoir_get_final_color(
@@ -142,32 +157,65 @@ vec3 direct_reservoir_get_final_color(
     if (direct_sample_is_empty(reservoir.smple))
         return vec3(0.0f);
 
-    Light light = direct_sample_get_light(reservoir.smple);
-    vec3 light_position = direct_sample_get_position(
+    vec3 integrand;
+    direct_sample_get_visible_color(
         reservoir.smple,
-        light,
-        sample_pos
+        sample_pos,
+        geo_normal,
+        tex_normal,
+        integrand
     );
-    vec3 to_light = light_position - sample_pos;
+    return integrand * direct_reservoir_compute_ucw(reservoir);
+}
 
-    vec3 tint_color;
-    float light_transmittance;
+void direct_reservoir_encode(
+    DirectReservoir reservoir,
+    out uvec2 sample_data,
+    out vec3 reservoir_data
+);
+void direct_reservoir_decode(
+    out DirectReservoir reservoir,
+    uvec2 sample_data,
+    vec3 reservoir_data
+);
+bool direct_reservoir_is_finite(DirectReservoir reservoir);
 
-    if (!trace_light_vis(
-            sample_pos,
-            to_light,
-            light_position,
-            40,
-            tint_color,
-            light_transmittance
-    )) {
-        return vec3(0.0f);
+vec4 direct_reservoir_encode_candidate(DirectReservoir reservoir) {
+    uvec2 sample_data;
+    vec3 reservoir_data;
+    direct_reservoir_encode(reservoir, sample_data, reservoir_data);
+    return vec4(
+        uintBitsToFloat(sample_data.x),
+        uintBitsToFloat(sample_data.y),
+        reservoir_data.x,
+        reservoir_data.y
+    );
+}
+
+void direct_reservoir_decode_candidate(
+    out DirectReservoir reservoir,
+    vec4 data
+) {
+    direct_reservoir_decode(
+        reservoir,
+        floatBitsToUint(data.xy),
+        vec3(data.zw, 1.0f)
+    );
+}
+
+bool direct_reservoir_load_candidate(
+    out DirectReservoir reservoir,
+    ivec2 tex_coord
+) {
+    direct_reservoir_decode_candidate(
+        reservoir,
+        texelFetch(restir_direct_candidates, tex_coord, 0)
+    );
+    if (!direct_reservoir_is_finite(reservoir)) {
+        reservoir = direct_reservoir_empty();
+        return false;
     }
-
-    vec3 sampled_color = direct_sample_get_color(reservoir.smple, light, sample_pos, geo_normal, tex_normal);
-    vec3 final_color = sampled_color * tint_color.rgb * light_transmittance;
-
-    return final_color * reservoir.weight_sum;
+    return true;
 }
 
 void direct_reservoir_encode(

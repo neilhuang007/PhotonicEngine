@@ -92,6 +92,14 @@ void sample_indirect(
         if (ray_result_is_hit(hit)) { // Hit something
             albedo = voxel_data_albedo(ray_result_voxel_data(hit));
 
+            Light hit_light = ray_result_light_data(hit);
+            if (ray_result_is_transparent(hit)) {
+                vec3 tint_color = running_tint_color != vec4(0.0f)
+                    ? running_tint_color.rgb
+                    : vec3(1.0f);
+                indirect_color += hit_light.color * tint_color * running_bounce_color;
+            }
+
             if (should_apply_transparency(hit, albedo, rnd_state)) {
                 ray_iter_apply_transparency(running_tint_color, albedo);
                 ray_iter_skip_block(ray);
@@ -125,8 +133,9 @@ void sample_indirect(
 #endif
 
 #if defined PH_INDIRECT_SURFACE_SAMPLE_MODIFIER_DISABLED
-            Light hit_light = ray_result_light_data(hit);
-            if (light_is_valid(hit_light) && PH_SHOULD_SAMPLE_LIGHT) {
+            if (light_is_valid(hit_light) &&
+                    PH_SHOULD_SAMPLE_LIGHT &&
+                    !ray_result_is_transparent(hit)) {
                 radiance_color += light_sample_at(
                         hit_light,
                         sample_rt_pos,

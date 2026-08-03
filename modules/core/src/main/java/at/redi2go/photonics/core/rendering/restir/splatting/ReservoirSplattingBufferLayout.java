@@ -4,9 +4,7 @@ package at.redi2go.photonics.core.rendering.restir.splatting;
  * Checked std430 layout for the single-splat destination binning buffers.
  *
  * <p>Each block is exposed to GLSL as one packed {@code uint[]} and uses the
- * word offsets below. Keeping the arrays in three blocks leaves binding space
- * for the path reservoir and reconnection data required by the full
- * algorithm.</p>
+ * word offsets below.</p>
  */
 public record ReservoirSplattingBufferLayout(
         int width,
@@ -19,7 +17,8 @@ public record ReservoirSplattingBufferLayout(
         long appendSourceIdsWordOffset,
         long sortedByteSize,
         long cellOffsetsWordOffset,
-        long sortedSourceIdsWordOffset
+        long sortedSourceIdsWordOffset,
+        long reconnectionByteSize
 ) {
     public static final int WORD_BYTE_SIZE = Integer.BYTES;
 
@@ -31,6 +30,7 @@ public record ReservoirSplattingBufferLayout(
     public static final int APPEND_TARGET_CELL_WORD_LANE = 0;
     public static final int APPEND_LOCAL_CELL_INDEX_WORD_LANE = 1;
     public static final int SOURCE_ID_WORD_STRIDE = 1;
+    public static final int RECONNECTION_WORD_STRIDE = 8;
 
     public static ReservoirSplattingBufferLayout plan(
             int width,
@@ -71,9 +71,15 @@ public record ReservoirSplattingBufferLayout(
         long sortedWordCount = Math.addExact(sortedSourceIdsWordOffset, pixelCount);
         long sortedByteSize = wordsToBytes(sortedWordCount);
 
+        long reconnectionByteSize = wordsToBytes(Math.multiplyExact(
+                pixelCount,
+                RECONNECTION_WORD_STRIDE
+        ));
+
         requireBlockFits("counter", countersByteSize, maximumShaderStorageBlockByteSize);
         requireBlockFits("append", appendByteSize, maximumShaderStorageBlockByteSize);
         requireBlockFits("sorted", sortedByteSize, maximumShaderStorageBlockByteSize);
+        requireBlockFits("reconnection", reconnectionByteSize, maximumShaderStorageBlockByteSize);
 
         return new ReservoirSplattingBufferLayout(
                 width,
@@ -86,7 +92,8 @@ public record ReservoirSplattingBufferLayout(
                 appendSourceIdsWordOffset,
                 sortedByteSize,
                 cellOffsetsWordOffset,
-                sortedSourceIdsWordOffset
+                sortedSourceIdsWordOffset,
+                reconnectionByteSize
         );
     }
 

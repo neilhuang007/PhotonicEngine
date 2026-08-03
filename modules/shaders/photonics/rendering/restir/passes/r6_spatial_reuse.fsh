@@ -8,6 +8,9 @@
 #include "/photonics/rendering/restir/neighbor/reservoir.glsl"
 
 #if defined PH_ENABLE_BLOCKLIGHT
+#define PH_DIRECT_RECONNECTION_FRAG_DATA
+#include "/photonics/rendering/restir/reservoir_splatting/reconnection.glsl"
+
 layout(location = DIRECT_RESERVOIR_0) out uvec2 di_reservoir_0;
 layout(location = DIRECT_RESERVOIR_1) out vec3 di_reservoir_1;
 #endif
@@ -28,9 +31,25 @@ void main() {
 #if defined PH_ENABLE_BLOCKLIGHT
     DirectReservoir direct_result = direct_reservoir_empty();
     DirectReservoir temp_direct = direct_reservoir_empty();
+    uint direct_pixel_index = uint(frag_tex_coord.y) *
+            uint(PH_VIEW_SIZE.x) + uint(frag_tex_coord.x);
+    DirectReconnection direct_reconnection =
+            direct_reconnection_from_frag(_frag_data);
 
     direct_reservoir_load_previous(temp_direct, frag_tex_coord, false);
-    direct_reservoir_merge(direct_result, temp_direct);
+    DirectReconnection temporal_reconnection =
+            direct_reconnection_load_current(direct_pixel_index);
+    if (direct_reservoir_add_sample(
+            direct_result,
+            temp_direct,
+            temp_direct.smple,
+            temp_direct.target_pdf,
+            1.0f,
+            1.0f,
+            ph_rand_next_float(frag_rnd_state)
+    )) {
+        direct_reconnection = temporal_reconnection;
+    }
 #endif
 
 
@@ -52,7 +71,11 @@ void main() {
 
 #if defined PH_ENABLE_BLOCKLIGHT
             if (direct_reservoir_load_previous(temp_direct, sample_texel, false)) {
-                direct_reservoir_merge(direct_result, temp_direct);
+                if (direct_reservoir_merge(direct_result, temp_direct)) {
+                    direct_reconnection = direct_reconnection_from_frag(
+                        _frag_data
+                    );
+                }
             }
 #endif
 
@@ -73,13 +96,14 @@ void main() {
     }
 
 #if defined PH_ENABLE_BLOCKLIGHT
-    direct_reservoir_clamp_samples(direct_result);
-
-    direct_reservoir_finalize_weight(direct_result);
     direct_reservoir_encode(
         direct_result,
         di_reservoir_0,
         di_reservoir_1
+    );
+    direct_reconnection_store_spatial(
+        direct_pixel_index,
+        direct_reconnection
     );
 #endif
 
