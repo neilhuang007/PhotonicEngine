@@ -35,9 +35,10 @@ void _ray_iter_setup(inout RayIterator ray) {
 void ray_iter_begin(out RayIterator ray, vec3 position, vec3 direction) {
     ray.position = position;
     ray.direction = direction;
+    ray.iterations = PH_RAY_DEFAULT_ITERATIONS;
+    ray.hit = ph_ray_miss;
 
     _ray_iter_setup(ray);
-    ray.iterations = PH_RAY_DEFAULT_ITERATIONS;
 }
 
 void ray_iter_set_position(inout RayIterator ray, vec3 position) {
@@ -56,7 +57,11 @@ void ray_iter_set_direction(inout RayIterator ray, vec3 direction) {
 const vec3 ph_ray_no_target = vec3(-1.0f);
 void _ray_iter_trace_next(inout RayIterator ray, vec3 target) {
     if (ray.state != PH_RAY_STATE_READY) return;
-    if (ray.iterations == 0) return;
+    ray.hit = ph_ray_miss;
+    if (ray.iterations == 0) {
+        ray.state = PH_RAY_STATE_HAS_MISS;
+        return;
+    }
 
     uint[11] stack;
     int scale_exp = 21;
@@ -79,8 +84,8 @@ void _ray_iter_trace_next(inout RayIterator ray, vec3 target) {
         target = ph_floor_scale(target, world_block_scale_exp);
     }
 
-    int tmin;
-    uint child_index;
+    int tmin = 0;
+    uint child_index = 0u;
 
     ray.state = PH_RAY_STATE_HAS_MISS;
     ray.hit = ph_ray_miss;
@@ -200,7 +205,7 @@ bool ray_iter_has_next_block(inout RayIterator ray, vec3 target) {
 RayResult ray_iter_next_block(inout RayIterator ray, vec3 target) {
     _ray_iter_trace_next(ray, target);
     if (ray.state != PH_RAY_STATE_OUT_OF_BOUNDS)
-    ray.state = PH_RAY_STATE_READY;
+        ray.state = PH_RAY_STATE_READY;
 
     return ray.hit;
 }
