@@ -7,7 +7,9 @@
 #include "/photonics/rendering/frag/common.glsl"
 #include "/photonics/rendering/restir/restir.glsl"
 
+#if !defined PH_RESTIR_GI_MODIFIER_DISABLED
 #include "/photonics/modifiers/restir_gi_modifier.glsl"
+#endif
 
 #if defined PH_ENABLE_BLOCKLIGHT
 layout(location = DIRECT_RESERVOIR_0) out uvec2 di_reservoir_0;

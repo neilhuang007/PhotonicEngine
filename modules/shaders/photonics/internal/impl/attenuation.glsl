@@ -1,4 +1,6 @@
+#ifndef PH_ATTENUATION_MODIFIER_DISABLED
 #include "/photonics/modifiers/attenuation_modifier.glsl"
+#endif
 
 #ifdef PH_ATTENUATION_MODIFIER_DISABLED
 vec3 ph_compute_attenuation(

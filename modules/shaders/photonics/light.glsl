@@ -19,7 +19,9 @@ struct Light {
     float block_radius;
 };
 
+#ifndef PH_LIGHT_MODIFIER_DISABLED
 #include "/photonics/modifiers/light_modifier.glsl"
+#endif
 #include "/photonics/internal/impl/attenuation.glsl"
 
 Light new_light_from_vec4(

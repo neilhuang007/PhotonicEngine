@@ -5,6 +5,7 @@ import at.redi2go.photonics.api.shaders.PhotonicsProperties;
 import at.redi2go.photonics.api.gpu.systems.IRenderSystem;
 import at.redi2go.photonics.core.Photonics;
 import at.redi2go.photonics.core.iris.pipeline.DefineHolder;
+import at.redi2go.photonics.core.rendering.lights.LocalLightCapacity;
 import at.redi2go.photonics.core.rendering.restir.regir.ReGIRConfiguration;
 import at.redi2go.photonics.core.rendering.restir.regir.ReGIRContext;
 
@@ -15,8 +16,18 @@ public class IrisDefines {
     }
 
     public static void registerDefines(DefineHolder defines, PhotonicsProperties phProperties) {
+        long maximumShaderStorageBlockByteSize =
+                IRenderSystem.getDevice().ph$getMaxShaderStorageBlockSize();
+        LocalLightCapacity localLightCapacity = LocalLightCapacity.resolve(
+                phProperties.getMaxLights(),
+                maximumShaderStorageBlockByteSize
+        );
+
         defines.floatDefine("PH_RENDER_SCALE", phProperties.getRenderScale());
-        defines.intDefine("PH_MAX_LIGHTS", phProperties.getMaxLights());
+        defines.intDefine(
+                "PH_MAX_LIGHTS",
+                localLightCapacity.effectiveMaxLights()
+        );
         defines.intDefine("PH_MAX_GI_BOUNCES", phProperties.getMaxGiBounces());
 
         switch (phProperties.getAlphaMode()) {
@@ -65,7 +76,7 @@ public class IrisDefines {
 
         ReGIRContext reGIRContext = new ReGIRContext(
                 ReGIRConfiguration.from(phProperties),
-                IRenderSystem.getDevice().ph$getMaxShaderStorageBlockSize()
+                maximumShaderStorageBlockByteSize
         );
         ReGIRConfiguration reGIRConfiguration = reGIRContext.configuration();
         defines.enumDefine("PH_REGIR_MODE", reGIRConfiguration.mode());

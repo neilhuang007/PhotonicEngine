@@ -12,11 +12,6 @@ import java.nio.ByteBuffer;
 import java.util.function.Supplier;
 
 public class BufferLightList extends AbstractLightList {
-    // 12 floats per light struct (4 bytes per float)
-    // position (vec3f) + block id, color (vec3f) + intensity, attenuation (vec2f) + falloff + radius in blocks
-    private static final int LIGHT_DATA_SIZE = 12;
-    private static final int LIGHT_BYTE_SIZE = LIGHT_DATA_SIZE * 4;
-
     private final IGpuBufferHeap listHeap;
     private final MemoryView listView;
 
@@ -28,12 +23,32 @@ public class BufferLightList extends AbstractLightList {
             int maxLights,
             Supplier<WorldOrigin> worldOriginSupplier
     ) {
-        super(sectionManager, maxLights, worldOriginSupplier);
+        this(
+                sectionManager,
+                LocalLightCapacity.resolve(
+                        maxLights,
+                        IRenderSystem.getDevice()
+                                .ph$getMaxShaderStorageBlockSize()
+                ),
+                worldOriginSupplier
+        );
+    }
+
+    private BufferLightList(
+            SectionManager sectionManager,
+            LocalLightCapacity capacity,
+            Supplier<WorldOrigin> worldOriginSupplier
+    ) {
+        super(
+                sectionManager,
+                capacity.effectiveMaxLights(),
+                worldOriginSupplier
+        );
 
         this.listHeap = IRenderSystem.getDevice()
                 .ph$createBufferHeap(
                         () -> "Photonics Light List",
-                        (long) maxLights * LIGHT_BYTE_SIZE,
+                        capacity.lightListByteSize(),
                         0
                 );
 
@@ -43,7 +58,7 @@ public class BufferLightList extends AbstractLightList {
         this.mappingHeap = IRenderSystem.getDevice()
                 .ph$createBufferHeap(
                         () -> "Photonics Light Mapping",
-                        (long) maxLights * 4,
+                        capacity.mappingByteSize(),
                         0
                 );
 
@@ -52,7 +67,9 @@ public class BufferLightList extends AbstractLightList {
 
     @Override
     protected void storeLight(int index, Vector4f[] light) {
-        ByteBuffer buffer = listView.buffer().position(index * LIGHT_BYTE_SIZE);
+        ByteBuffer buffer = listView.buffer().position(
+                index * LocalLightCapacity.LIGHT_BYTE_SIZE
+        );
 
         for (var vec : light) {
             buffer.putFloat(vec.x);

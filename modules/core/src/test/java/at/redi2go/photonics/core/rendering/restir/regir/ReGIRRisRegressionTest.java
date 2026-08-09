@@ -69,13 +69,29 @@ class ReGIRRisRegressionTest {
             throws IOException {
         String initial = readShader("rendering/restir/passes/r2_initial_direct.fsh");
         String temporal = readShader("rendering/restir/passes/r5_temporal_reuse.fsh");
+        String splatting = readShader(
+                "rendering/restir/reservoir_splatting/temporal_reuse.glsl"
+        );
         String reservoir = readShader("rendering/restir/direct/reservoir.glsl");
 
         assertTrue(initial.contains("regir_finalize_initial_reservoir"));
-        assertTrue(temporal.contains("direct_reservoir_merge"));
+        assertTrue(temporal.contains("direct_splat_temporal_reuse"));
         assertTrue(
-                reservoir.contains("direct_reservoir_finalize_weight"),
-                "Temporal reuse must re-finalize the combined reservoir"
+                splatting.contains("float current_mis = 1.0f;")
+                        && splatting.contains("float previous_mis = 0.0f;"),
+                "Reservoir splatting temporal reuse must compute the " +
+                        "current/previous pairwise MIS terms"
+        );
+        assertTrue(
+                reservoir.contains("float direct_reservoir_compute_ucw("),
+                "Temporal reuse must preserve a decodable selected-sample " +
+                        "inverse PDF after combining reservoirs"
+        );
+        assertTrue(
+                reservoir.contains(
+                        "return integrand * direct_reservoir_compute_ucw(reservoir);"
+                ),
+                "Final shading must apply the stored GRIS inverse PDF exactly once"
         );
         assertTrue(reservoir.contains("direct_reservoir_light_valid_bit"));
         assertTrue(reservoir.contains(

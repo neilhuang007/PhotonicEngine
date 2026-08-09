@@ -3,7 +3,10 @@
 
 #include "/photonics/utility/color.glsl"
 #include "/photonics/utility/normal_encoding.glsl"
+
+#ifndef PH_VOXEL_COLOR_MODIFIER_DISABLED
 #include "/photonics/modifiers/voxel_color_modifier.glsl"
+#endif
 
 // VoxelData common
 
@@ -40,6 +43,14 @@ vec4 voxel_data_albedo(VoxelData voxel_data) {
 #endif
 
     return albedo;
+}
+
+float voxel_data_visibility_transmittance(vec4 albedo) {
+#if defined PH_FULL_TRANSPARENCY
+    return clamp(1.0f - albedo.a, 0.0f, 1.0f);
+#else
+    return 1.0f;
+#endif
 }
 
 vec4 voxel_data_normal(VoxelData voxel_data) {

@@ -1,4 +1,6 @@
+#if !defined PH_IS_HAND_MODIFIER_DISABLED
 #include "/photonics/modifiers/is_hand_modifier.glsl"
+#endif
 
 #ifdef PH_IS_HAND_MODIFIER_DISABLED
 bool ph_is_hand() {

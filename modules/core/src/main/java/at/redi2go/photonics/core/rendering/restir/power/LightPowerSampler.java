@@ -5,6 +5,7 @@ import at.redi2go.photonics.api.gpu.systems.IRenderSystem;
 import at.redi2go.photonics.core.iris.pipeline.buffer.IBufferHolder;
 import at.redi2go.photonics.core.iris.pipeline.rendering.IrisPipeline;
 import at.redi2go.photonics.core.rendering.RenderingComponent;
+import at.redi2go.photonics.core.rendering.lights.LocalLightCapacity;
 
 import java.util.function.BooleanSupplier;
 
@@ -32,9 +33,15 @@ public final class LightPowerSampler implements RenderingComponent {
     private final IGpuBuffer localRisBuffer;
 
     public LightPowerSampler(int maxLights) {
-        PowerPdfLayout layout = PowerPdfLayout.forMaxLights(maxLights);
-        int localRisByteSize = checkedLocalRisByteSize();
         var device = IRenderSystem.getDevice();
+        LocalLightCapacity capacity = LocalLightCapacity.resolve(
+                maxLights,
+                device.ph$getMaxShaderStorageBlockSize()
+        );
+        PowerPdfLayout layout = PowerPdfLayout.forMaxLights(
+                capacity.effectiveMaxLights()
+        );
+        int localRisByteSize = checkedLocalRisByteSize();
 
         powerPdfBuffer = device.ph$createBuffer(
                 () -> "Photonics ReGIR Light Power PDF",

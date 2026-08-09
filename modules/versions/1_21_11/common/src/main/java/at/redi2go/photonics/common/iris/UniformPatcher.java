@@ -8,13 +8,14 @@ import java.util.HashSet;
 import java.util.Set;
 
 public class UniformPatcher {
-    private final static String UNIFORM_PREFIX = "//ph_required:";
+    private static final String UNIFORM_PREFIX = "//ph_required:";
 
-    private static Set<String> uniforms = new HashSet<>();
+    private static final Set<String> uniforms = new HashSet<>();
     private static int parsingState = 0;
 
     public static void prepare() {
         uniforms.clear();
+        parsingState = 0;
     }
 
     public static void nextToken(Token token) {
@@ -76,6 +77,7 @@ public class UniformPatcher {
                 uniformBuilder.setLength(0);
 
                 if (uniforms.contains(uniform)) return;
+                uniforms.add(uniform);
                 if (uniformCount[0]++ > 0) str.append(", ");
 
                 str.append(uniform);

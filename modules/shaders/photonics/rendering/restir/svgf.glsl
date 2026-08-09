@@ -1,4 +1,6 @@
+#if !defined PH_RESTIR_DENOISER_DEPTH_FETCH_MODIFIER_DISABLED
 #include "/photonics/modifiers/restir_denoiser_depth_fetch_modifier.glsl"
+#endif
 #include "/photonics/utility/normal_encoding.glsl"
 
 //ph_required: uniform usampler2D prev_denoise_result;

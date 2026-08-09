@@ -2,7 +2,9 @@
 #include "/photonics/tracing.glsl"
 #include "/photonics/utility/random.glsl"
 
+#if !defined PH_INDIRECT_SURFACE_SAMPLE_MODIFIER_DISABLED
 #include "/photonics/modifiers/indirect_surface_sample_modifier.glsl"
+#endif
 
 //TODO: Make these into settings
 #define PH_MAX_GI_ITERATIONS 100

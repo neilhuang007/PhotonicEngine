@@ -82,6 +82,11 @@ bool ray_result_is_transparent(RayResult hit) {
     return (hit._data1 & PH_SIGN_BIT) != 0;
 }
 
+bool ray_result_is_block(RayResult hit, vec3 block_position) {
+    return ray_result_is_hit(hit) &&
+            floor(ray_result_position(hit)) == floor(block_position);
+}
+
 uint ray_result_skylight(RayResult hit) {
     const uint skylight_mask = 0xf;
     return (hit._data1 >> 27) & skylight_mask;

@@ -45,13 +45,13 @@ vec3 direct_reconnection_rt_pos(DirectReconnection reconnection) {
             reconnection.rt_offset_magnitude;
 }
 
+vec3 direct_reconnection_geo_normal(DirectReconnection reconnection) {
+    return ph_unpack_normal(reconnection.geo_normal);
+}
+
 vec3 direct_reconnection_visibility_target(DirectReconnection reconnection) {
     return reconnection.player_pos + rt_camera_position -
             direct_reconnection_geo_normal(reconnection) * 0.01f;
-}
-
-vec3 direct_reconnection_geo_normal(DirectReconnection reconnection) {
-    return ph_unpack_normal(reconnection.geo_normal);
 }
 
 vec3 direct_reconnection_tex_normal(DirectReconnection reconnection) {

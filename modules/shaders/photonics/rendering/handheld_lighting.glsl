@@ -1,4 +1,6 @@
+#if !defined PH_HANDHELD_LIGHT_PULSE_MODIFIER_DISABLED
 #include "/photonics/modifiers/handheld_light_pulse_modifier.glsl"
+#endif
 #include "/photonics/light.glsl"
 #include "/photonics/tracing.glsl"
 
@@ -93,7 +95,7 @@ bool handheld_sample_trace(in HandheldSample smple, out vec3 tint_color, out flo
             VoxelData voxel_data = ray_result_voxel_data(result);
             vec4 albedo = voxel_data_albedo(voxel_data);
 
-            light_transmittance *= 1.0f - albedo.a;
+            light_transmittance *= voxel_data_visibility_transmittance(albedo);
             ray_iter_apply_transparency(running_tint_color, albedo);
             ray_iter_skip_block(ray);
 
