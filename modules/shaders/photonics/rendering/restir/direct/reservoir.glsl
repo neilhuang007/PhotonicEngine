@@ -14,7 +14,7 @@
 //ph_required: uniform sampler2D restir_direct_reservoirs1;
 //ph_required: uniform usampler2D prev_restir_direct_reservoirs0;
 //ph_required: uniform sampler2D prev_restir_direct_reservoirs1;
-//ph_required: uniform sampler2D restir_direct_candidates;
+//ph_required: uniform usampler2D restir_direct_candidates;
 
 const float max_direct_temporal_samples = 20.0f;
 struct DirectReservoir {
@@ -210,26 +210,24 @@ void direct_reservoir_decode(
 );
 bool direct_reservoir_is_finite(DirectReservoir reservoir);
 
-vec4 direct_reservoir_encode_candidate(DirectReservoir reservoir) {
+uvec4 direct_reservoir_encode_candidate(DirectReservoir reservoir) {
     uvec2 sample_data;
     vec3 reservoir_data;
     direct_reservoir_encode(reservoir, sample_data, reservoir_data);
-    return vec4(
-        uintBitsToFloat(sample_data.x),
-        uintBitsToFloat(sample_data.y),
-        reservoir_data.x,
-        reservoir_data.y
+    return uvec4(
+        sample_data,
+        floatBitsToUint(reservoir_data.xy)
     );
 }
 
 void direct_reservoir_decode_candidate(
     out DirectReservoir reservoir,
-    vec4 data
+    uvec4 data
 ) {
     direct_reservoir_decode(
         reservoir,
-        floatBitsToUint(data.xy),
-        vec3(data.zw, 1.0f)
+        data.xy,
+        vec3(uintBitsToFloat(data.zw), 1.0f)
     );
 }
 

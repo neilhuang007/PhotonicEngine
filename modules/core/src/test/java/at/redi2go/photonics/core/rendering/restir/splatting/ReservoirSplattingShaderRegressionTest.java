@@ -37,6 +37,8 @@ class ReservoirSplattingShaderRegressionTest {
             "rendering/restir/passes/r5_temporal_reuse.fsh";
     private static final String RESOLVE_SHADER =
             "rendering/restir/passes/r8_diffuse.fsh";
+    private static final String DENOISING_SHADER =
+            "rendering/restir/passes/r11_denoising.fsh";
     private static final String TEMPORAL_REUSE_SHADER =
             "rendering/restir/reservoir_splatting/temporal_reuse.glsl";
     private static final String REPROJECT_PASS_SHADER =
@@ -110,6 +112,40 @@ class ReservoirSplattingShaderRegressionTest {
         assertFalse(
                 source.contains("direct_reservoir_validate_visibility("),
                 "validating only the selected proposal biases candidate selection"
+        );
+    }
+
+    @Test
+    void candidateSampleBitsUseIntegerTextureLanes() throws IOException {
+        Path root = findRepositoryRoot();
+        String pipeline = Files.readString(root.resolve(
+                "modules/core/src/main/java/at/redi2go/photonics/core/" +
+                        "iris/extensions/RestirPipeline.java"
+        ));
+        String reservoir = Files.readString(findShaderRoot().resolve(
+                DIRECT_RESERVOIR_SHADER
+        ));
+        String initial = Files.readString(findShaderRoot().resolve(
+                INITIAL_DIRECT_SHADER
+        ));
+
+        assertTrue(pipeline.contains(
+                "\"restir_direct_candidates\", ITextureFormat.rgba32ui()"
+        ));
+        assertTrue(reservoir.contains(
+                "uniform usampler2D restir_direct_candidates"
+        ));
+        assertTrue(reservoir.contains(
+                "uvec4 direct_reservoir_encode_candidate("
+        ));
+        assertTrue(initial.contains(
+                "out uvec4 direct_candidate;"
+        ));
+        assertFalse(
+                reservoir.contains("uintBitsToFloat(sample_data"),
+                "arbitrary UV/sample bit patterns must not pass through a " +
+                        "floating-point render target where NaN payloads may " +
+                        "be canonicalized"
         );
     }
 
@@ -197,6 +233,26 @@ class ReservoirSplattingShaderRegressionTest {
                 ),
                 "spatial reuse must reconnect to the retained exact light vertex"
         );
+    }
+
+    @Test
+    void directSpatialPrimaryTracingUsesSuppliedInverseMatrices()
+            throws IOException {
+        String source = new IncludeExpander(
+                findShaderRoot(),
+                Map.of()
+        ).expand(SPATIAL_REUSE_SHADER);
+
+        assertTrue(source.contains(
+                "//ph_required: uniform mat4 gbufferModelViewInverse;"
+        ));
+        assertTrue(source.contains(
+                "//ph_required: uniform mat4 gbufferProjectionInverse;"
+        ));
+        assertTrue(source.contains("gbufferProjectionInverse *"));
+        assertTrue(source.contains("mat3(gbufferModelViewInverse)"));
+        assertFalse(source.contains("inverse(gbufferProjection)"));
+        assertFalse(source.contains("inverse(gbufferModelView)"));
     }
 
     @Test
@@ -347,6 +403,29 @@ class ReservoirSplattingShaderRegressionTest {
     }
 
     @Test
+    void canonicalSubpixelComesFromTheRetainedPrimaryProjection()
+            throws IOException {
+        String source = Files.readString(findShaderRoot().resolve(
+                TEMPORAL_REUSE_SHADER
+        ));
+
+        assertTrue(source.contains(
+                "direct_splat_project_primary_unchecked(\n" +
+                        "            current_reconnection,"
+        ));
+        assertTrue(source.contains(
+                "current_reconnection.subpixel = " +
+                        "fract(projected_current_pixel);"
+        ));
+        assertTrue(source.contains("vec2(0.5f)"));
+        assertFalse(
+                source.contains("fract(gl_FragCoord.xy)"),
+                "a jittered G-buffer pixel center is not its unjittered " +
+                        "film-domain subpixel"
+        );
+    }
+
+    @Test
     void softShadowSamplePositionIsIndependentOfTheShadingPoint()
             throws IOException {
         String source = Files.readString(findShaderRoot().resolve(
@@ -375,6 +454,48 @@ class ReservoirSplattingShaderRegressionTest {
         assertTrue(source.contains("confidenceCapViolationCount"));
         assertTrue(source.contains("relativeFrameLuminanceStdDev"));
         assertTrue(source.contains("relativeHalfLuminanceDrift"));
+        assertTrue(source.contains("TEST_RENDER_DISTANCE = 2"));
+        assertTrue(source.contains("TEST_SIMULATION_DISTANCE = 5"));
+        assertTrue(source.contains(
+                "reservoir.positiveTargetReservoirCount == 0"
+        ));
+        assertTrue(source.contains(
+                "reservoir.meanPositiveTargetConfidence\n" +
+                        "                < " +
+                        "MIN_STABLE_POSITIVE_TARGET_CONFIDENCE"
+        ));
+        assertTrue(source.contains("lastRejectedReason"));
+        assertTrue(source.contains("if (!phaseReady || !sampleReady)"));
+        assertTrue(
+                source.contains("positiveTargets > 0 &&\n" +
+                        "                meanConfidence < " +
+                        "MIN_STABLE_POSITIVE_TARGET_CONFIDENCE"),
+                "direct reservoir confidence is a conditional metric: enforce " +
+                        "it only after the fixture actually observes targets"
+        );
+    }
+
+    @Test
+    void denoiserInitializesFragmentDataBeforeHandQueries()
+            throws IOException {
+        String source = Files.readString(findShaderRoot().resolve(
+                DENOISING_SHADER
+        ));
+
+        int setup = source.indexOf("setup_frag_data(0);");
+        int passWeight = source.indexOf("float pass_weight = get_pass_weight");
+        int handUse = source.indexOf("frag_is_hand", passWeight);
+
+        assertTrue(setup >= 0, "the A-trous pass must load FragData");
+        assertTrue(source.contains(
+                "//ph_required: uniform float near, far;"
+        ));
+        assertFalse(source.contains("//ph_Required:"));
+        assertTrue(
+                passWeight > setup && handUse > setup,
+                "frag_is_hand must not read the global FragData before " +
+                        "setup_frag_data() has initialized it"
+        );
     }
 
     private static Path findShaderRoot() {

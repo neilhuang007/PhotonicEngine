@@ -1,7 +1,9 @@
 package at.redi2go.photonics.client;
 
 import at.redi2go.photonics.api.gpu.textures.IGpuTexture2D;
+import at.redi2go.photonics.api.shaders.AlphaMode;
 import at.redi2go.photonics.api.shaders.IShaderPack;
+import at.redi2go.photonics.api.shaders.LightingMode;
 import at.redi2go.photonics.common.iris.IrisUtil;
 import at.redi2go.photonics.common.iris.pipeline.framebuffer.FlippableFramebuffer;
 import at.redi2go.photonics.common.iris.pipeline.renderer.DeferredIrisRenderer;
@@ -55,6 +57,9 @@ final class ShaderGameTestReporter {
     private static final int INITIAL_SETTLE_TICKS = 240;
     private static final int MOVED_SETTLE_TICKS = 100;
     private static final int CAPTURE_SPACING_TICKS = 4;
+    private static final int TEST_RENDER_DISTANCE = 2;
+    private static final int TEST_SIMULATION_DISTANCE = 5;
+    private static final int EXPECTED_SPATIAL_REUSE_SAMPLES = 4;
     private static final Duration REPORT_TIMEOUT = Duration.ofMinutes(3);
     private static final double CAMERA_TRANSLATION_BLOCKS = 0.35;
     private static final double MIN_MEAN_LUMINANCE = 0.01;
@@ -68,9 +73,15 @@ final class ShaderGameTestReporter {
     private static final double MAX_LIGHTING_FRAME_CHROMATICITY_DISTANCE = 0.04;
     private static final double MAX_RELATIVE_FRAME_LUMINANCE_STDDEV = 0.50;
     private static final double MAX_RELATIVE_HALF_LUMINANCE_DRIFT = 0.50;
-    private static final double MIN_POSITIVE_TARGET_CONFIDENCE = 2.0;
+    // Falcor's PathReservoir caps confidence at 20. Requiring near-cap
+    // confidence distinguishes temporal ScatterOnly reuse from the initial
+    // 1-current + 4-spatial-neighbor baseline produced without valid history.
+    private static final double FALCOR_CONFIDENCE_CAP = 20.0;
+    private static final double MIN_STABLE_POSITIVE_TARGET_CONFIDENCE =
+            FALCOR_CONFIDENCE_CAP - 1.0;
     private static final double MIN_RESERVOIR_FINITE_PIXEL_FRACTION = 1.0;
-    private static final double MAX_RESERVOIR_CONFIDENCE = 20.001;
+    private static final double MAX_RESERVOIR_CONFIDENCE =
+            FALCOR_CONFIDENCE_CAP + 0.001;
 
     private final Path reportFile;
     private final Instant startedAt = Instant.now();
@@ -92,13 +103,25 @@ final class ShaderGameTestReporter {
     private String extensionClass = "";
     private String shaderPack = "";
     private Map<String, String> shaderPackSettings = Map.of();
+    private Map<String, Object> shaderPackProperties = Map.of();
     private int activePipelineTicks;
     private int settleTicks;
     private int captureSpacingTicks;
+    private int cameraADiscardedWarmupFrames;
+    private int cameraBDiscardedWarmupFrames;
+    private boolean cameraAReady;
+    private boolean cameraBReady;
+    private boolean serverDistanceApplied;
+    private LightingFrameMetrics cameraALastWarmupLighting;
+    private LightingFrameMetrics cameraBLastWarmupLighting;
+    private ReservoirFrameMetrics cameraALastWarmupReservoir;
+    private ReservoirFrameMetrics cameraBLastWarmupReservoir;
     private boolean movedCamera;
     private boolean captureInFlight;
     private boolean focusPauseDisabled;
     private boolean previousPauseOnLostFocus;
+    private int previousRenderDistance;
+    private int previousSimulationDistance;
     private boolean finished;
 
     private ShaderGameTestReporter(Path reportFile) {
@@ -131,7 +154,14 @@ final class ShaderGameTestReporter {
 
         if (!focusPauseDisabled) {
             previousPauseOnLostFocus = client.options.pauseOnLostFocus;
+            previousRenderDistance = client.options.renderDistance().get();
+            previousSimulationDistance =
+                    client.options.simulationDistance().get();
             client.options.pauseOnLostFocus = false;
+            client.options.renderDistance().set(TEST_RENDER_DISTANCE);
+            client.options.simulationDistance().set(
+                    TEST_SIMULATION_DISTANCE
+            );
             focusPauseDisabled = true;
         }
 
@@ -143,6 +173,17 @@ final class ShaderGameTestReporter {
             }
 
             LocalPlayer player = client.player;
+            var singleplayerServer = client.getSingleplayerServer();
+            if (!serverDistanceApplied && singleplayerServer != null) {
+                singleplayerServer.execute(() -> {
+                    var players = singleplayerServer.getPlayerList();
+                    players.setViewDistance(TEST_RENDER_DISTANCE);
+                    players.setSimulationDistance(
+                            TEST_SIMULATION_DISTANCE
+                    );
+                });
+                serverDistanceApplied = true;
+            }
             var currentPipeline = Iris.getPipelineManager()
                     .getPipelineNullable();
             var extension = IrisUtil.getPhotonics().orElse(null);
@@ -168,12 +209,20 @@ final class ShaderGameTestReporter {
                 return;
             }
             if (shaderPack.isEmpty()) {
-                snapshotShaderPackSettings();
+                snapshotShaderPack(activePack);
                 Photonics.LOGGER.info(
                         "Shader game-test pack properties: enabled={}, mode={}",
                         activePack.properties().isPhotonicsEnabled(),
                         activePack.properties().getLightingMode()
                 );
+                if (!hasExpectedShaderPackConfiguration(activePack)) {
+                    errors.add("The shader game-test pack must enable direct "
+                            + "ReSTIR with four spatial samples, block "
+                            + "lighting, GI, and block transparency while "
+                            + "disabling combined ReSTIR GI.");
+                    finish(client, false);
+                    return;
+                }
             } else if (!shaderPack.equals(activePack.name())) {
                 errors.add("The active shader pack changed from " + shaderPack
                         + " to " + activePack.name() + " during the shader "
@@ -233,8 +282,33 @@ final class ShaderGameTestReporter {
                         movedCamera
                                 ? cameraBReservoirFrames
                                 : cameraAReservoirFrames;
-                activeLightingFrames.add(captureLightingAttachment());
-                activeReservoirFrames.add(captureReservoirAttachment());
+                LightingFrameMetrics lighting = captureLightingAttachment();
+                ReservoirFrameMetrics reservoir =
+                        captureReservoirAttachment();
+                boolean phaseReady = movedCamera
+                        ? cameraBReady
+                        : cameraAReady;
+                boolean sampleReady = isRestirCaptureReady(
+                        lighting,
+                        reservoir
+                );
+                if (!phaseReady || !sampleReady) {
+                    if (movedCamera) {
+                        cameraBDiscardedWarmupFrames++;
+                        cameraBLastWarmupLighting = lighting;
+                        cameraBLastWarmupReservoir = reservoir;
+                        cameraBReady = sampleReady;
+                    } else {
+                        cameraADiscardedWarmupFrames++;
+                        cameraALastWarmupLighting = lighting;
+                        cameraALastWarmupReservoir = reservoir;
+                        cameraAReady = sampleReady;
+                    }
+                    return;
+                }
+
+                activeLightingFrames.add(lighting);
+                activeReservoirFrames.add(reservoir);
                 captureInFlight = true;
                 Screenshot.takeScreenshot(
                         client.getMainRenderTarget(),
@@ -321,6 +395,11 @@ final class ShaderGameTestReporter {
                 reservoirB.meanPositiveTargetConfidence,
                 reservoirB.positiveTargetReservoirCount
         );
+        boolean hasPositiveReservoirTargets = positiveTargetReservoirs > 0;
+        boolean reservoirConfidenceIsStable =
+                !hasPositiveReservoirTargets ||
+                        meanPositiveTargetConfidence
+                        >= MIN_STABLE_POSITIVE_TARGET_CONFIDENCE;
 
         return meanLuminance >= MIN_LIGHTING_MEAN_LUMINANCE
                 && nonzeroFraction >= MIN_LIGHTING_NONZERO_PIXEL_FRACTION
@@ -341,13 +420,48 @@ final class ShaderGameTestReporter {
                 >= MIN_RESERVOIR_FINITE_PIXEL_FRACTION
                 && reservoirB.meanFinitePixelFraction
                 >= MIN_RESERVOIR_FINITE_PIXEL_FRACTION
-                && positiveTargetReservoirs > 0
-                && meanPositiveTargetConfidence
-                >= MIN_POSITIVE_TARGET_CONFIDENCE
+                && reservoirConfidenceIsStable
                 && reservoirA.maxConfidence <= MAX_RESERVOIR_CONFIDENCE
                 && reservoirB.maxConfidence <= MAX_RESERVOIR_CONFIDENCE
                 && reservoirA.confidenceCapViolationCount == 0
                 && reservoirB.confidenceCapViolationCount == 0;
+    }
+
+    private static boolean isRestirCaptureReady(
+            LightingFrameMetrics lighting,
+            ReservoirFrameMetrics reservoir
+    ) {
+        return restirReadinessFailure(lighting, reservoir).isEmpty();
+    }
+
+    private static String restirReadinessFailure(
+            LightingFrameMetrics lighting,
+            ReservoirFrameMetrics reservoir
+    ) {
+        if (lighting.finitePixelFraction
+                < MIN_LIGHTING_FINITE_PIXEL_FRACTION) {
+            return "non-finite ReSTIR lighting";
+        }
+        if (lighting.nonzeroPixelFraction
+                < MIN_LIGHTING_NONZERO_PIXEL_FRACTION) {
+            return "zero ReSTIR lighting";
+        }
+        if (reservoir.finitePixelFraction
+                < MIN_RESERVOIR_FINITE_PIXEL_FRACTION) {
+            return "non-finite direct reservoir";
+        }
+        if (reservoir.positiveTargetReservoirCount == 0) {
+            return "no positive direct-reservoir targets";
+        }
+        if (reservoir.meanPositiveTargetConfidence
+                < MIN_STABLE_POSITIVE_TARGET_CONFIDENCE) {
+            return "direct-reservoir confidence is still at the current-frame "
+                    + "spatial baseline";
+        }
+        if (reservoir.maxConfidence > MAX_RESERVOIR_CONFIDENCE) {
+            return "direct-reservoir confidence exceeds the Falcor cap";
+        }
+        return "";
     }
 
     private void finish(Minecraft client, boolean success) {
@@ -399,8 +513,15 @@ final class ShaderGameTestReporter {
                 );
             }
         } finally {
+            if (cameraA != null && client.player != null) {
+                cameraA.apply(client.player);
+            }
             if (focusPauseDisabled) {
                 client.options.pauseOnLostFocus = previousPauseOnLostFocus;
+                client.options.renderDistance().set(previousRenderDistance);
+                client.options.simulationDistance().set(
+                        previousSimulationDistance
+                );
             }
             client.stop();
         }
@@ -496,10 +617,10 @@ final class ShaderGameTestReporter {
                 reservoirB.meanPositiveTargetConfidence,
                 reservoirB.positiveTargetReservoirCount
         );
-        if (positiveTargets == 0 ||
-                meanConfidence < MIN_POSITIVE_TARGET_CONFIDENCE) {
-            return "Direct reservoirs are not accumulating confidence across "
-                    + "frames.";
+        if (positiveTargets > 0 &&
+                meanConfidence < MIN_STABLE_POSITIVE_TARGET_CONFIDENCE) {
+            return "Direct reservoir confidence did not accumulate beyond "
+                    + "the current-frame spatial baseline.";
         }
         if (reservoirA.maxConfidence > MAX_RESERVOIR_CONFIDENCE
                 || reservoirB.maxConfidence > MAX_RESERVOIR_CONFIDENCE
@@ -518,9 +639,33 @@ final class ShaderGameTestReporter {
         metrics.put("extensionClass", extensionClass);
         metrics.put("shaderPack", shaderPack);
         metrics.put("shaderPackSettings", shaderPackSettings);
+        metrics.put("shaderPackProperties", shaderPackProperties);
         metrics.put("activePipelineTicks", activePipelineTicks);
         metrics.put("framesPerCamera", REQUIRED_FRAMES_PER_CAMERA);
         metrics.put("cameraTranslationBlocks", CAMERA_TRANSLATION_BLOCKS);
+        metrics.put("testRenderDistance", TEST_RENDER_DISTANCE);
+        metrics.put("testSimulationDistance", TEST_SIMULATION_DISTANCE);
+        metrics.put("serverDistanceApplied", serverDistanceApplied);
+        metrics.put("currentFrameSpatialConfidenceBaseline",
+                EXPECTED_SPATIAL_REUSE_SAMPLES + 1);
+        metrics.put("discardedWarmupFrames", Map.of(
+                "cameraA", cameraADiscardedWarmupFrames,
+                "cameraB", cameraBDiscardedWarmupFrames
+        ));
+        metrics.put("warmupReadiness", Map.of(
+                "cameraA", warmupReadinessMetrics(
+                        cameraADiscardedWarmupFrames,
+                        cameraAReady,
+                        cameraALastWarmupLighting,
+                        cameraALastWarmupReservoir
+                ),
+                "cameraB", warmupReadinessMetrics(
+                        cameraBDiscardedWarmupFrames,
+                        cameraBReady,
+                        cameraBLastWarmupLighting,
+                        cameraBLastWarmupReservoir
+                )
+        ));
         Map<String, Object> thresholds = new LinkedHashMap<>();
         thresholds.put("minMeanLuminance", MIN_MEAN_LUMINANCE);
         thresholds.put("minNonzeroPixelFraction",
@@ -543,8 +688,8 @@ final class ShaderGameTestReporter {
                 MAX_RELATIVE_FRAME_LUMINANCE_STDDEV);
         thresholds.put("maxRelativeHalfLuminanceDrift",
                 MAX_RELATIVE_HALF_LUMINANCE_DRIFT);
-        thresholds.put("minPositiveTargetConfidence",
-                MIN_POSITIVE_TARGET_CONFIDENCE);
+        thresholds.put("minStablePositiveTargetConfidence",
+                MIN_STABLE_POSITIVE_TARGET_CONFIDENCE);
         thresholds.put("minReservoirFinitePixelFraction",
                 MIN_RESERVOIR_FINITE_PIXEL_FRACTION);
         thresholds.put("maxReservoirConfidence",
@@ -657,6 +802,37 @@ final class ShaderGameTestReporter {
             metrics.put("directReservoirs", reservoirs);
         }
         return metrics;
+    }
+
+    private static Map<String, Object> warmupReadinessMetrics(
+            int discardedFrames,
+            boolean ready,
+            LightingFrameMetrics lighting,
+            ReservoirFrameMetrics reservoir
+    ) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("discardedFrames", discardedFrames);
+        result.put("ready", ready);
+        if (lighting != null) {
+            result.put("lightingFinitePixelFraction",
+                    lighting.finitePixelFraction);
+            result.put("lightingNonzeroPixelFraction",
+                    lighting.nonzeroPixelFraction);
+        }
+        if (reservoir != null) {
+            result.put("reservoirFinitePixelFraction",
+                    reservoir.finitePixelFraction);
+            result.put("positiveTargetReservoirCount",
+                    reservoir.positiveTargetReservoirCount);
+            result.put("meanPositiveTargetConfidence",
+                    reservoir.meanPositiveTargetConfidence);
+            result.put("maxConfidence", reservoir.maxConfidence);
+        }
+        if (lighting != null && reservoir != null) {
+            result.put("lastRejectedReason",
+                    restirReadinessFailure(lighting, reservoir));
+        }
+        return result;
     }
 
     private Map<String, Object> lightingCameraMetrics(
@@ -775,7 +951,12 @@ final class ShaderGameTestReporter {
                     GL42.GL_TEXTURE_FETCH_BARRIER_BIT
                             | GL42.GL_FRAMEBUFFER_BARRIER_BIT
             );
-            readTextureImage(texture, GL11.GL_RGBA, pixels);
+            readTextureImage(
+                    "restir_lighting",
+                    texture,
+                    GL11.GL_RGBA,
+                    pixels
+            );
             return LightingFrameMetrics.from(pixels, width, height);
         } finally {
             MemoryUtil.memFree(pixels);
@@ -794,7 +975,12 @@ final class ShaderGameTestReporter {
                     GL42.GL_TEXTURE_FETCH_BARRIER_BIT
                             | GL42.GL_FRAMEBUFFER_BARRIER_BIT
             );
-            readTextureImage(texture, GL11.GL_RGB, pixels);
+            readTextureImage(
+                    "restir_direct_reservoirs1",
+                    texture,
+                    GL11.GL_RGB,
+                    pixels
+            );
             return ReservoirFrameMetrics.from(pixels, width, height);
         } finally {
             MemoryUtil.memFree(pixels);
@@ -802,11 +988,21 @@ final class ShaderGameTestReporter {
     }
 
     private static void readTextureImage(
+            String attachmentName,
             IGpuTexture2D texture,
             int format,
             FloatBuffer pixels
     ) {
         int handle = IrisUtil.getTextureHandle(texture);
+        int priorError = GL11.glGetError();
+        if (priorError != GL11.GL_NO_ERROR) {
+            throw new IllegalStateException(
+                    "OpenGL error before reading " + attachmentName
+                            + " (handle " + handle + "): 0x"
+                            + Integer.toHexString(priorError)
+            );
+        }
+
         int byteCount = Math.multiplyExact(
                 pixels.remaining(),
                 Float.BYTES
@@ -822,8 +1018,8 @@ final class ShaderGameTestReporter {
         int error = GL11.glGetError();
         if (error != GL11.GL_NO_ERROR) {
             throw new IllegalStateException(
-                    "OpenGL texture readback failed for handle " + handle
-                            + " with error 0x"
+                    "OpenGL error after reading " + attachmentName
+                            + " (handle " + handle + "): 0x"
                             + Integer.toHexString(error)
             );
         }
@@ -854,12 +1050,20 @@ final class ShaderGameTestReporter {
         );
     }
 
-    private void snapshotShaderPackSettings() throws IOException {
-        var activePack = Iris.getCurrentPack().orElse(null);
-        if (activePack == null) {
-            return;
-        }
-        shaderPack = ((IShaderPack) activePack).name();
+    private void snapshotShaderPack(IShaderPack activePack)
+            throws IOException {
+        shaderPack = activePack.name();
+        var properties = activePack.properties();
+        shaderPackProperties = Map.of(
+                "enabled", properties.isPhotonicsEnabled(),
+                "lightingMode", properties.getLightingMode().name(),
+                "blockLightEnabled", properties.isBlockLightEnabled(),
+                "giEnabled", properties.isGiEnabled(),
+                "combinedRestirGiEnabled", properties.useRestirCombinedGi(),
+                "alphaMode", properties.getAlphaMode().name(),
+                "spatialReuseSamples",
+                properties.getRestirSpatialReuseSamples()
+        );
 
         Path settingsFile = FabricLoader.getInstance()
                 .getGameDir()
@@ -869,18 +1073,32 @@ final class ShaderGameTestReporter {
             return;
         }
 
-        Properties properties = new Properties();
+        Properties settingsProperties = new Properties();
         try (var reader = Files.newBufferedReader(
                 settingsFile,
                 StandardCharsets.UTF_8
         )) {
-            properties.load(reader);
+            settingsProperties.load(reader);
         }
         Map<String, String> settings = new TreeMap<>();
-        for (String name : properties.stringPropertyNames()) {
-            settings.put(name, properties.getProperty(name));
+        for (String name : settingsProperties.stringPropertyNames()) {
+            settings.put(name, settingsProperties.getProperty(name));
         }
         shaderPackSettings = Map.copyOf(settings);
+    }
+
+    private static boolean hasExpectedShaderPackConfiguration(
+            IShaderPack shaderPack
+    ) {
+        var properties = shaderPack.properties();
+        return properties.isPhotonicsEnabled()
+                && properties.getLightingMode() == LightingMode.RESTIR
+                && properties.isBlockLightEnabled()
+                && properties.isGiEnabled()
+                && !properties.useRestirCombinedGi()
+                && properties.getAlphaMode() == AlphaMode.BLOCK
+                && properties.getRestirSpatialReuseSamples()
+                == EXPECTED_SPATIAL_REUSE_SAMPLES;
     }
 
     private Map<String, Object> cameraMetrics(

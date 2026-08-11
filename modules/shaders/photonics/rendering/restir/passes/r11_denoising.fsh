@@ -1,7 +1,7 @@
 #version 430
 
 //ph_required: uniform int atrous_iteration;
-//ph_Required: uniform float near, far;
+//ph_required: uniform float near, far;
 
 #include "/photonics/rendering/frag/common.glsl"
 #include "/photonics/rendering/restir/restir.glsl"
@@ -19,6 +19,8 @@ float get_pass_weight(SvgfSample smple) {
 }
 
 void main() {
+    setup_frag_data(0);
+
     SvgfSample center_sample = svgf_sample_empty();
     svgf_sample_load(center_sample, frag_tex_coord);
 

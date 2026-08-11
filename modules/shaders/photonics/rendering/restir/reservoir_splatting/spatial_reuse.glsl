@@ -6,6 +6,9 @@
 #include "/photonics/rendering/restir/reservoir_splatting/reconnection.glsl"
 #include "/photonics/rendering/restir/reservoir_splatting/shift.glsl"
 
+//ph_required: uniform mat4 gbufferModelViewInverse;
+//ph_required: uniform mat4 gbufferProjectionInverse;
+
 const uint direct_spatial_neighbor_count = 8192u;
 
 layout(std430) readonly buffer ph_direct_spatial_neighbor_offsets {
@@ -32,13 +35,13 @@ float direct_spatial_pairwise_mis(float numerator, float competing) {
 
 vec3 direct_spatial_camera_ray_direction(vec2 fractional_pixel) {
     vec2 ndc = fractional_pixel / PH_VIEW_SIZE * 2.0f - 1.0f;
-    vec4 view_position = inverse(gbufferProjection) *
+    vec4 view_position = gbufferProjectionInverse *
             vec4(ndc, 1.0f, 1.0f);
     vec3 view_direction = normalize(
         view_position.xyz / view_position.w
     );
     return normalize(
-        mat3(inverse(gbufferModelView)) * view_direction
+        mat3(gbufferModelViewInverse) * view_direction
     );
 }
 
@@ -51,7 +54,8 @@ bool direct_spatial_trace_primary(
 
     FragData target_frag;
     frag_data_load(target_frag, target_pixel);
-    if (frag_data_is_hand(target_frag)) return false;
+    if (!frag_data_is_in_world(target_frag) ||
+            frag_data_is_hand(target_frag)) return false;
 
     RayIterator primary_ray;
     ray_iter_begin(

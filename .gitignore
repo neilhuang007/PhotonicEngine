@@ -28,6 +28,7 @@ atlassian-ide-plugin.xml
 *.nar
 *.ear
 *.zip
+!modules/versions/1_21_11/fabric/src/shaderGameTest/shaderpacks/Shrimple-main-photonics-test.zip
 *.tar.gz
 *.rar
 

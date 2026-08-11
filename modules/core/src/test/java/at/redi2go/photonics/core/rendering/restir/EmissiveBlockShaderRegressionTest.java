@@ -12,6 +12,33 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class EmissiveBlockShaderRegressionTest {
     @Test
+    void packedFragmentFlagsAndNormalsUseIntegerTextureLanes()
+            throws IOException {
+        Path root = findRepositoryRoot();
+        String pipelines = Files.readString(root.resolve(
+                "modules/core/src/main/java/at/redi2go/photonics/core/" +
+                        "iris/Pipelines.java"
+        ));
+        String fragData = readShader("rendering/frag/frag_data.glsl");
+        String fragLoad = readShader("rendering/frag/f0_load_frag.fsh");
+
+        assertTrue(pipelines.contains(
+                "\"ph_frag_data1\", ITextureFormat.rgba32ui()"
+        ));
+        assertTrue(fragData.contains("uniform usampler2D ph_frag_data1"));
+        assertTrue(fragData.contains(
+                "uniform usampler2D prev_ph_frag_data1"
+        ));
+        assertTrue(fragLoad.contains("out uvec4 frag_data1_out;"));
+        assertTrue(fragLoad.contains("frag_data1_out = data1;"));
+        assertFalse(
+                fragLoad.contains("uintBitsToFloat(data1)"),
+                "packed normals and material flags must not cross a float " +
+                        "attachment that can canonicalize NaN bit patterns"
+        );
+    }
+
+    @Test
     void handheldRayUsesAvailableInverseViewProjectionMatrices()
             throws IOException {
         String handheld = readShader("rendering/handheld_lighting.glsl");
@@ -439,14 +466,18 @@ class EmissiveBlockShaderRegressionTest {
     }
 
     private static Path findShaderRoot() {
+        return findRepositoryRoot().resolve("modules/shaders/photonics");
+    }
+
+    private static Path findRepositoryRoot() {
         Path current = Path.of(System.getProperty("user.dir")).toAbsolutePath();
         while (current != null) {
             Path candidate = current.resolve("modules/shaders/photonics");
             if (Files.isDirectory(candidate)) {
-                return candidate;
+                return current;
             }
             current = current.getParent();
         }
-        throw new IllegalStateException("Could not find modules/shaders/photonics");
+        throw new IllegalStateException("Could not find repository root");
     }
 }

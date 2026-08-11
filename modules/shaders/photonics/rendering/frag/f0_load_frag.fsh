@@ -13,7 +13,7 @@
 #undef PH_VOXEL_COLOR_MODIFIER_DISABLED
 
 layout(location = 0) out vec4 frag_data0_out;
-layout(location = 1) out vec4 frag_data1_out;
+layout(location = 1) out uvec4 frag_data1_out;
 
 bool classify_primary_surface_transmission(
     vec3 rt_position,
@@ -105,6 +105,6 @@ void main() {
     ph_encode_frag(data0, data1);
 
     frag_data0_out = data0;
-    frag_data1_out = uintBitsToFloat(data1);
+    frag_data1_out = data1;
 }
 

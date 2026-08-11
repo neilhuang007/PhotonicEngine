@@ -15,7 +15,7 @@ public class Pipelines {
     public static void fragData(AbstractPhotonicsExtension ext, IrisFactory irisFactory, float renderScale) {
         var framebuffer = irisFactory.newFramebuffer(renderScale)
                 .addAttachment("ph_frag_data0", ITextureFormat.rgba16f(), FLIP | CREATE_SAMPLER | CREATE_PREV_SAMPLER)
-                .addAttachment("ph_frag_data1", ITextureFormat.rgba32f(), FLIP | CREATE_SAMPLER | CREATE_PREV_SAMPLER)
+                .addAttachment("ph_frag_data1", ITextureFormat.rgba32ui(), FLIP | CREATE_SAMPLER | CREATE_PREV_SAMPLER)
                 .build(ext::registerComponent);
 
         irisFactory.newPipeline()

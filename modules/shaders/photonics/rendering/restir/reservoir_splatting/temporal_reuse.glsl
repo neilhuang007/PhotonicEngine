@@ -78,8 +78,19 @@ void direct_splat_temporal_reuse(
     direct_reservoir_load_candidate(current_reservoir, frag_tex_coord);
     DirectReconnection current_reconnection = direct_reconnection_from_frag(
         _frag_data,
-        fract(gl_FragCoord.xy)
+        vec2(0.5f)
     );
+    vec2 projected_current_pixel;
+    if (direct_splat_project_primary_unchecked(
+            current_reconnection,
+            false,
+            projected_current_pixel
+    ) && all(equal(
+            ivec2(floor(projected_current_pixel)),
+            frag_tex_coord
+    ))) {
+        current_reconnection.subpixel = fract(projected_current_pixel);
+    }
     float current_target = 0.0f;
     direct_splat_initialize_path_data(
         current_reconnection,

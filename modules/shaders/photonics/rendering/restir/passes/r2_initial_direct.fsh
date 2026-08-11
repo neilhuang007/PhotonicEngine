@@ -8,7 +8,7 @@
 #include "/photonics/rendering/restir/restir.glsl"
 #include "/photonics/rendering/restir/regir/sampling.glsl"
 
-layout(location = DIRECT_CANDIDATE_RESERVOIR) out vec4 direct_candidate;
+layout(location = DIRECT_CANDIDATE_RESERVOIR) out uvec4 direct_candidate;
 
 void regir_stream_local_light_sample(
     inout DirectReservoir reservoir,

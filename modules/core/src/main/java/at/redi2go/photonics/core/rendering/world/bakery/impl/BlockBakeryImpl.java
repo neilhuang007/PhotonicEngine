@@ -208,6 +208,8 @@ public class BlockBakeryImpl implements BlockBakery {
             long hash = vertexHash;
 
             hash = hash * 31 + currentTextureHash;
+            hash = hash * 31 + currentBlockId;
+            hash = hash * 31 + Boolean.hashCode(currentBlockLightTransmissive);
 
             hash = hash * 31 + intAt(index);
             hash = hash * 31 + intAt(index + 1);
