@@ -25,6 +25,7 @@ $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $fabricRunDirectory = Join-Path $repositoryRoot 'modules/versions/1_21_11/fabric/run'
 $artifactDirectory = Join-Path $fabricRunDirectory 'automation'
 $reportPath = Join-Path $artifactDirectory 'shader-game-test-report.json'
+$latestLogPath = Join-Path $fabricRunDirectory 'logs/latest.log'
 $testWorldPath = Join-Path $fabricRunDirectory 'saves/backup/level.dat'
 $sessionLockPath = Join-Path (Split-Path -Parent $testWorldPath) 'session.lock'
 
@@ -73,6 +74,105 @@ function Get-ReportResult {
     }
 }
 
+function Read-NewLogContent {
+    param(
+        [string]$Path,
+        [ref]$Offset
+    )
+
+    if (!(Test-Path -LiteralPath $Path -PathType Leaf)) {
+        $Offset.Value = 0
+        return ''
+    }
+
+    $logFile = Get-Item -LiteralPath $Path
+    if ($logFile.Length -lt $Offset.Value) {
+        $Offset.Value = 0
+    }
+    if ($logFile.Length -eq $Offset.Value) {
+        return ''
+    }
+
+    $stream = [System.IO.File]::Open(
+        $Path,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read,
+        [System.IO.FileShare]::ReadWrite
+    )
+    try {
+        [void]$stream.Seek($Offset.Value, [System.IO.SeekOrigin]::Begin)
+        $byteCount = [int]($logFile.Length - $Offset.Value)
+        $buffer = New-Object byte[] $byteCount
+        $bytesRead = $stream.Read($buffer, 0, $byteCount)
+        $Offset.Value = $stream.Position
+
+        if ($bytesRead -le 0) {
+            return ''
+        }
+
+        return [System.Text.Encoding]::UTF8.GetString($buffer, 0, $bytesRead)
+    } finally {
+        $stream.Dispose()
+    }
+}
+
+function Get-NewShaderFailure {
+    param(
+        [string]$Path,
+        [ref]$Offset
+    )
+
+    $content = Read-NewLogContent -Path $Path -Offset $Offset
+    if ([string]::IsNullOrWhiteSpace($content)) {
+        return $null
+    }
+
+    if ($content -match 'Failed to load the shaderpack|Falling back to normal rendering without shaders|unexpected error: failed to read') {
+        $details = $content -split "`r?`n" |
+                Where-Object {
+                    $_ -match 'Failed to load the shaderpack' -or
+                    $_ -match 'Falling back to normal rendering without shaders' -or
+                    $_ -match 'unexpected error: failed to read' -or
+                    $_ -match 'ZipException'
+                } |
+                Select-Object -Last 8
+
+        return [pscustomobject]@{
+            Result = 'shaderpack-load-failed'
+            FailureReason = if ($null -eq $details -or $details.Count -eq 0) {
+                'Iris failed to load the selected shaderpack.'
+            } else {
+                $details -join ' '
+            }
+        }
+    }
+
+    if ($content -notmatch 'Failed to create shader rendering pipeline') {
+        return $null
+    }
+
+    $details = $content -split "`r?`n" |
+            Where-Object {
+                $_ -match 'Shader compilation log' -or
+                $_ -match 'ShaderCompileException' -or
+                $_ -match 'GLSL compile failed' -or
+                $_ -match 'Failed to create shader rendering pipeline'
+            } |
+            Select-Object -Last 6
+
+    if ($null -eq $details -or $details.Count -eq 0) {
+        return [pscustomobject]@{
+            Result = 'shader-pipeline-failed'
+            FailureReason = 'Iris failed to create the shader rendering pipeline.'
+        }
+    }
+
+    return [pscustomobject]@{
+        Result = 'shader-pipeline-failed'
+        FailureReason = $details -join ' '
+    }
+}
+
 function Exit-WithFailure {
     param(
         [string]$Result,
@@ -117,7 +217,12 @@ if (!(Test-WorldIsAvailable -SessionLockPath $sessionLockPath)) {
     Exit-WithFailure -Result 'test-world-in-use' -FailureReason "The Quick Play test world is already open: $sessionLockPath"
 }
 
-$testMutex = [System.Threading.Mutex]::new($false, 'Local\PhotonicEngine-Shader-Game-Test')
+$shaderGameTestMutexName = if ([string]::IsNullOrWhiteSpace($env:PHOTONICS_SHADER_GAME_MUTEX_NAME)) {
+    'Local\PhotonicEngine-Shader-Game-Test'
+} else {
+    $env:PHOTONICS_SHADER_GAME_MUTEX_NAME
+}
+$testMutex = [System.Threading.Mutex]::new($false, $shaderGameTestMutexName)
 $mutexAcquired = $false
 try {
     try {
@@ -137,6 +242,11 @@ try {
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $reason = 'completed'
+    $failureReason = ''
+    $logReadOffset = 0
+    if (Test-Path -LiteralPath $latestLogPath -PathType Leaf) {
+        $logReadOffset = (Get-Item -LiteralPath $latestLogPath).Length
+    }
 
     $gradleArgumentList = @()
     if ($GradleArgs) {
@@ -165,6 +275,16 @@ try {
             }
         }
 
+        $shaderFailure = Get-NewShaderFailure `
+            -Path $latestLogPath `
+            -Offset ([ref]$logReadOffset)
+        if ($null -ne $shaderFailure) {
+            $reason = $shaderFailure.Result
+            $failureReason = $shaderFailure.FailureReason
+            Stop-ProcessTree -ProcessIds $processIds
+            break
+        }
+
         if ((Get-Date) -ge $deadline) {
             $reason = 'timeout'
             Stop-ProcessTree -ProcessIds $processIds
@@ -173,9 +293,15 @@ try {
     }
 
     try {
-        Wait-Process -Id $process.Id -Timeout 10 -ErrorAction SilentlyContinue
+        [void]$process.WaitForExit(10000)
+        $process.Refresh()
     } catch {
         # The process tree was already terminated after the timeout.
+    }
+    $processExitCode = if ($null -eq $process.ExitCode) { 0 } else { $process.ExitCode }
+
+    if ($reason -eq 'shader-pipeline-failed' -or $reason -eq 'shaderpack-load-failed') {
+        Exit-WithFailure -Result $reason -FailureReason $failureReason
     }
 
     if ($reason -ne 'completed') {
@@ -183,15 +309,15 @@ try {
     }
 
     if ($LaunchOnly) {
-        if ($process.ExitCode -ne 0) {
-            Exit-WithFailure -Result 'gradle-failed' -FailureReason "Gradle task failed with exit code $($process.ExitCode)."
+        if ($processExitCode -ne 0) {
+            Exit-WithFailure -Result 'gradle-failed' -FailureReason "Gradle task failed with exit code $processExitCode."
         }
         Write-Output 'watchdogResult=launch-only-completed'
         exit 0
     }
 
-    if ($process.ExitCode -ne 0) {
-        Exit-WithFailure -Result 'gradle-failed' -FailureReason "Gradle task failed with exit code $($process.ExitCode)."
+    if ($processExitCode -ne 0) {
+        Exit-WithFailure -Result 'gradle-failed' -FailureReason "Gradle task failed with exit code $processExitCode."
     }
 
     $reportResult = Get-ReportResult -Path $reportPath

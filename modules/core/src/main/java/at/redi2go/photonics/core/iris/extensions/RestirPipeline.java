@@ -54,9 +54,16 @@ public class RestirPipeline extends AbstractPhotonicsExtension {
                 .addAttachment("restir_indirect_reservoirs1", ITextureFormat.rgb32ui(), FLIP | CREATE_SAMPLER | CREATE_PREV_SAMPLER, this::isRestirGiEnabled)
                 .addAttachment("restir_direct_candidates", ITextureFormat.rgba32f(), CREATE_SAMPLER, this::isBlockLightEnabled)
                 .build(this::registerComponent);
-        var reservoirSplatting = registerComponent(
-                new ReservoirSplattingRendering(restirFramebuffer)
-        );
+        ReservoirSplattingRendering reservoirSplatting = null;
+        if (isBlockLightEnabled()) {
+            reservoirSplatting = registerComponent(
+                    new ReservoirSplattingRendering(
+                        restirFramebuffer,
+                        lightList::contentGeneration,
+                        worldCompiler::contentGeneration
+                    )
+            );
+        }
 
         var denoiseFramebuffer = irisFactory.newFramebuffer(properties.getRenderScale())
                 .addAttachment("denoise_result", ITextureFormat.rgba32ui(), FLIP | CREATE_SAMPLER | CREATE_PREV_SAMPLER, this::isDenoisingEnabled)
@@ -72,8 +79,8 @@ public class RestirPipeline extends AbstractPhotonicsExtension {
                 .debugGroup("restir")
                 .withFramebuffer(restirFramebuffer)
                 .thenFlip(restirFramebuffer)
-                .deferredPass("load neighbor data", "/photonics/rendering/restir/passes/r0_load_neighbor_data.fsh", null, this::isSpatialReuseEnabled)
-                .deferredPass("neighbor selection", "/photonics/rendering/restir/passes/r1_neighbor_selection.fsh", null, this::isSpatialReuseEnabled);
+                .deferredPass("load neighbor data", "/photonics/rendering/restir/passes/r0_load_neighbor_data.fsh", null, this::isIndirectSpatialReuseEnabled)
+                .deferredPass("neighbor selection", "/photonics/rendering/restir/passes/r1_neighbor_selection.fsh", null, this::isIndirectSpatialReuseEnabled);
 
         var restirSamplingPipeline = lightPowerSampler.addPreparationPasses(
                 restirPipeline,
@@ -90,14 +97,31 @@ public class RestirPipeline extends AbstractPhotonicsExtension {
                 .deferredPass("initial direct", "/photonics/rendering/restir/passes/r2_initial_direct.fsh", null, this::isBlockLightEnabled)
                 .deferredPass("initial indirect", "/photonics/rendering/restir/passes/r4_initial_indirect.fsh", null, this::isRestirGiEnabled);
 
-        reservoirSplatting.addPasses(
-                restirSamplingPipeline,
-                this::isBlockLightEnabled
-        )
+        var restirReusePipeline = restirSamplingPipeline;
+        if (reservoirSplatting != null) {
+            restirReusePipeline = reservoirSplatting.addPasses(
+                    restirReusePipeline,
+                    this::isBlockLightEnabled
+            );
+        }
+
+        restirReusePipeline
                 .deferredPass("temporal reuse", "/photonics/rendering/restir/passes/r5_temporal_reuse.fsh", null, this::isRestirEnabled)
-                .thenFlip(this::isSpatialReuseEnabled, restirFramebuffer)
-                .deferredPass("spatial reuse", "/photonics/rendering/restir/passes/r6_spatial_reuse.fsh", null, this::isSpatialReuseEnabled)
-                .thenRun(reservoirSplatting::promoteSpatialOutput, this::isSpatialReuseEnabled)
+                .thenShaderStorageBarrier(this::isBlockLightEnabled)
+                .thenFlip(this::isRestirEnabled, restirFramebuffer)
+                .deferredPass("spatial reuse", "/photonics/rendering/restir/passes/r6_spatial_reuse.fsh", null, this::isSpatialReuseEnabled);
+        if (reservoirSplatting != null) {
+            restirReusePipeline
+                    .thenShaderStorageBarrier(
+                        this::isDirectSpatialReuseEnabled
+                    )
+                    .thenRun(
+                        reservoirSplatting::promoteSpatialOutput,
+                        this::isDirectSpatialReuseEnabled
+                    );
+        }
+
+        restirReusePipeline
                 .thenFlip(this::isSpatialReuseEnabled, restirFramebuffer)
                 .deferredPass("validate indirect", "/photonics/rendering/restir/passes/r7_validate_indirect.fsh", null, this::isRestirGiEnabled)
                 .deferredPass("diffuse", "/photonics/rendering/restir/passes/r8_diffuse.fsh", null, this::isRestirEnabled)
@@ -160,7 +184,16 @@ public class RestirPipeline extends AbstractPhotonicsExtension {
     }
 
     public boolean isSpatialReuseEnabled() {
-        return properties.getRestirSpatialReuseSamples() > 0;
+        return isRestirEnabled() &&
+                properties.getRestirSpatialReuseSamples() > 0;
+    }
+
+    public boolean isDirectSpatialReuseEnabled() {
+        return isBlockLightEnabled() && isSpatialReuseEnabled();
+    }
+
+    public boolean isIndirectSpatialReuseEnabled() {
+        return isRestirGiEnabled() && isSpatialReuseEnabled();
     }
 
     public boolean isHandheldLightingEnabled() {

@@ -58,8 +58,11 @@ void prepare_next_gi_ray(
         ray_iter_offset_position(ray, ray.direction * 0.03f);
 }
 
-#define should_apply_transparency(hit, albedo, rnd_state) \
-    (ray_result_is_transparent(hit) && ph_rand_next_float(rnd_state) > albedo.a)
+#define should_apply_transparency(hit, voxel_data, albedo, rnd_state) \
+    (ray_result_is_transparent(hit) && ( \
+        voxel_data_is_light_transmissive(voxel_data) || \
+        ph_rand_next_float(rnd_state) > albedo.a \
+    ))
 
 
 void sample_indirect(
@@ -92,7 +95,8 @@ void sample_indirect(
         vec3 radiance_color = vec3(0.0f);
 
         if (ray_result_is_hit(hit)) { // Hit something
-            albedo = voxel_data_albedo(ray_result_voxel_data(hit));
+            VoxelData voxel_data = ray_result_voxel_data(hit);
+            albedo = voxel_data_albedo(voxel_data);
 
             Light hit_light = ray_result_light_data(hit);
             if (ray_result_is_transparent(hit)) {
@@ -102,9 +106,19 @@ void sample_indirect(
                 indirect_color += hit_light.color * tint_color * running_bounce_color;
             }
 
-            if (should_apply_transparency(hit, albedo, rnd_state)) {
-                ray_iter_apply_transparency(running_tint_color, albedo);
-                ray_iter_skip_block(ray);
+            if (should_apply_transparency(
+                    hit,
+                    voxel_data,
+                    albedo,
+                    rnd_state
+            )) {
+                ray_iter_accumulate_transparency_tint(
+                    ray,
+                    running_tint_color,
+                    voxel_data,
+                    albedo
+                );
+                ray_iter_skip_transparent(ray);
 
                 bounce--;
                 continue;

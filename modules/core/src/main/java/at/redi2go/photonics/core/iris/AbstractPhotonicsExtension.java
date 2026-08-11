@@ -26,10 +26,14 @@ import org.jetbrains.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 
-public abstract class AbstractPhotonicsExtension extends AbstractRenderingComponent implements PhotonicsExtension {
+public abstract class AbstractPhotonicsExtension
+        extends AbstractRenderingComponent
+        implements PhotonicsExtension {
     private static final int ROOT_VOXEL_DEPTH = 3;
 
     protected final PhotonicsProperties properties;
+    protected final BufferLightList lightList;
+    protected final WorldCompiler worldCompiler;
     private final List<IrisPipeline> renderers = new ArrayList<>();
 
     public AbstractPhotonicsExtension(
@@ -42,15 +46,25 @@ public abstract class AbstractPhotonicsExtension extends AbstractRenderingCompon
         this.properties = properties;
 
         registerResource(atlasDownloader);
-        var sectionManager = registerComponent(new SectionManager(Minecraft::getRenderDistance));
+        var sectionManager = registerComponent(
+                new SectionManager(Minecraft::getRenderDistance)
+        );
 
         var worldAllocator = registerComponent(new BufferWorldAllocator(1 << 29));
         var paletteTexture = registerComponent(new BufferPaletteTexture(2048, 600));
 
-        var worldRegistry = new WorldRegistry(worldAllocator, paletteTexture, atlasDownloader);
+        var worldRegistry = new WorldRegistry(
+                worldAllocator,
+                paletteTexture,
+                atlasDownloader
+        );
 
-        var builtSectionQueue = sectionManager.<ChunkCompiler.BuildResult>newTaskQueue(WorldCompiler.MAX_SECTIONS_PER_RUN << 1, true);
-        var worldCompiler = registerComponent(new WorldCompiler(
+        var builtSectionQueue = sectionManager
+                .<ChunkCompiler.BuildResult>newTaskQueue(
+                        WorldCompiler.MAX_SECTIONS_PER_RUN << 1,
+                        true
+                );
+        worldCompiler = registerComponent(new WorldCompiler(
                 ROOT_VOXEL_DEPTH,
                 worldAllocator,
                 paletteTexture,
@@ -64,7 +78,7 @@ public abstract class AbstractPhotonicsExtension extends AbstractRenderingCompon
                 worldRegistry
         ));
 
-        registerComponent(
+        lightList = registerComponent(
                 new BufferLightList(
                         sectionManager,
                         properties.getMaxLights(),
@@ -72,13 +86,15 @@ public abstract class AbstractPhotonicsExtension extends AbstractRenderingCompon
                 )
         );
 
-        if (properties.getLightingMode() != LightingMode.OFF && properties.isHandheldLightEnabled())
+        if (properties.getLightingMode() != LightingMode.OFF &&
+                properties.isHandheldLightEnabled()) {
             registerComponent(
                     new HandheldLightComponent(
                             handheldItemSupplier,
                             properties
                     )
             );
+        }
     }
 
     public <T extends IrisPipeline> T registerRenderer(T component) {

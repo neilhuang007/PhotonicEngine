@@ -40,6 +40,10 @@ public interface PipelineActionBuilder {
         return false;
     }
 
+    default boolean addShaderStorageBarrier() {
+        return false;
+    }
+
     default boolean addBeginRepeating(int n) {
         return false;
     }

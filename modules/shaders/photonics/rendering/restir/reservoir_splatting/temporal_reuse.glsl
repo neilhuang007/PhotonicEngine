@@ -6,39 +6,45 @@
 #include "/photonics/rendering/restir/reservoir_splatting/reconnection.glsl"
 #include "/photonics/rendering/restir/reservoir_splatting/shift.glsl"
 
-float direct_splat_evaluate_target(
-    DirectSample smple,
-    DirectReconnection reconnection
-) {
-    vec3 integrand;
-    direct_sample_get_visible_color(
-        smple,
-        direct_reconnection_rt_pos(reconnection),
-        direct_reconnection_geo_normal(reconnection),
-        direct_reconnection_tex_normal(reconnection),
-        integrand
-    );
-    return direct_sample_weight(integrand);
+//ph_required: uniform int ph_reservoir_splatting_history_valid;
+
+bool direct_splat_history_is_valid() {
+    return ph_reservoir_splatting_history_valid != 0;
+}
+
+float direct_splat_balance_heuristic(float numerator, float competing) {
+    numerator = direct_reservoir_sanitize_weight(numerator);
+    competing = direct_reservoir_sanitize_weight(competing);
+    float denominator = numerator + competing;
+    return denominator > 0.0f
+            ? numerator / denominator
+            : 0.0f;
 }
 
 float direct_splat_previous_confidence(ivec2 pixel) {
     DirectReservoir reservoir;
     direct_reservoir_load_previous(reservoir, pixel, false);
-    return reservoir.total_samples;
+    return direct_reservoir_sanitize_weight(reservoir.total_samples);
 }
 
 float direct_splat_update_confidence(
     DirectReconnection current_reconnection,
     float current_confidence
 ) {
-    vec2 previous_fractional_pixel;
-    if (!direct_splat_project_primary_unchecked(
-            current_reconnection,
-            true,
-            previous_fractional_pixel
-    )) return min(max_direct_temporal_samples, current_confidence);
+    if (!direct_splat_history_is_valid()) {
+        return min(max_direct_temporal_samples, current_confidence);
+    }
+    vec2 previous_uv = ph_reproject_player_pos(
+        current_reconnection.player_pos,
+        direct_reconnection_is_hand(current_reconnection),
+        get_taa_jitter()
+    ).xy;
+    if (any(lessThan(previous_uv, vec2(0.0f))) ||
+            any(greaterThanEqual(previous_uv, vec2(1.0f)))) {
+        return min(max_direct_temporal_samples, current_confidence);
+    }
 
-    vec2 previous_texel = previous_fractional_pixel - 0.5f;
+    vec2 previous_texel = previous_uv * PH_VIEW_SIZE - 0.5f;
     ivec2 top_left = ivec2(floor(previous_texel));
     vec2 fractional_coord = clamp(fract(previous_texel), 0.0f, 1.0f);
     float confidence = current_confidence;
@@ -71,39 +77,44 @@ void direct_splat_temporal_reuse(
     DirectReservoir current_reservoir;
     direct_reservoir_load_candidate(current_reservoir, frag_tex_coord);
     DirectReconnection current_reconnection = direct_reconnection_from_frag(
-        _frag_data
+        _frag_data,
+        fract(gl_FragCoord.xy)
     );
+    float current_target = 0.0f;
+    direct_splat_initialize_path_data(
+        current_reconnection,
+        current_reservoir.smple,
+        current_target
+    );
+    current_reservoir.target_pdf = current_target;
 
     result = direct_reservoir_empty();
     selected_reconnection = current_reconnection;
 
     float current_mis = 1.0f;
     if (current_reservoir.target_pdf > 0.0f) {
-        float m1 = current_reservoir.target_pdf *
-                current_reservoir.total_samples;
+        float m1 = direct_reservoir_sanitize_weight(
+            current_reservoir.target_pdf *
+                    current_reservoir.total_samples
+        );
         float m2 = 0.0f;
         vec2 reverse_fractional_pixel;
         float reverse_jacobian;
-        if (!direct_reconnection_is_hand(current_reconnection) &&
+        if (direct_splat_history_is_valid() &&
+                !direct_reconnection_is_hand(current_reconnection) &&
                 direct_splat_shift_primary(
                     current_reconnection,
                     false,
                     reverse_fractional_pixel,
                     reverse_jacobian
                 )) {
-            float shifted_target = direct_splat_evaluate_target(
-                current_reservoir.smple,
-                current_reconnection
-            );
-            m2 = shifted_target * reverse_jacobian;
-            m2 = isnan(m2) ? 0.0f : m2;
-
             ivec2 reverse_pixel = ivec2(floor(reverse_fractional_pixel));
-            m2 *= direct_splat_previous_confidence(reverse_pixel);
+            m2 = direct_reservoir_sanitize_weight(
+                current_target * reverse_jacobian *
+                        direct_splat_previous_confidence(reverse_pixel)
+            );
         }
-        current_mis = (m1 + m2 == 0.0f)
-                ? 0.0f
-                : m1 / (m1 + m2);
+        current_mis = direct_splat_balance_heuristic(m1, m2);
     }
 
     bool current_selected = direct_reservoir_add_sample(
@@ -132,6 +143,7 @@ void direct_splat_temporal_reuse(
         );
         DirectReconnection previous_reconnection =
                 direct_reconnection_load_previous(source_index);
+        DirectReconnection shifted_reconnection = previous_reconnection;
 
         float previous_mis = 0.0f;
         float shifted_target = 0.0f;
@@ -141,27 +153,44 @@ void direct_splat_temporal_reuse(
                 direct_sample_reproject(shifted_sample)) {
             vec2 shifted_fractional_pixel;
             if (direct_splat_shift_primary(
-                    previous_reconnection,
+                    shifted_reconnection,
                     true,
                     shifted_fractional_pixel,
                     shifted_jacobian
             )) {
-                shifted_target = direct_splat_evaluate_target(
+                float source_secondary_jacobian =
+                        shifted_reconnection.secondary_path_jacobian;
+                shifted_reconnection.subpixel =
+                        fract(shifted_fractional_pixel);
+                direct_splat_evaluate_retained_path(
+                    shifted_reconnection,
                     shifted_sample,
-                    previous_reconnection
+                    shifted_target
                 );
-                float m1 = shifted_target * shifted_jacobian *
-                        current_reservoir.total_samples;
-                if (isnan(m1)) {
+                if (!direct_splat_apply_secondary_jacobian(
+                        source_secondary_jacobian,
+                        shifted_reconnection.secondary_path_jacobian,
+                        shifted_jacobian
+                )) {
+                    shifted_target = 0.0f;
+                    shifted_jacobian = 1.0f;
+                }
+                float shifted_measure = shifted_target * shifted_jacobian;
+                float m1;
+                if (!direct_reservoir_is_valid_measure(shifted_measure)) {
                     shifted_target = 0.0f;
                     shifted_jacobian = 1.0f;
                     m1 = 0.0f;
+                } else {
+                    m1 = direct_reservoir_sanitize_weight(
+                        shifted_measure * current_reservoir.total_samples
+                    );
                 }
-                float m2 = previous_reservoir.target_pdf *
-                        previous_reservoir.total_samples;
-                previous_mis = (m1 + m2 == 0.0f)
-                        ? 0.0f
-                        : m2 / (m1 + m2);
+                float m2 = direct_reservoir_sanitize_weight(
+                    previous_reservoir.target_pdf *
+                            previous_reservoir.total_samples
+                );
+                previous_mis = direct_splat_balance_heuristic(m2, m1);
             }
         }
 
@@ -175,7 +204,7 @@ void direct_splat_temporal_reuse(
             ph_rand_next_float(frag_rnd_state)
         );
         if (previous_selected) {
-            selected_reconnection = previous_reconnection;
+            selected_reconnection = shifted_reconnection;
         }
     }
 

@@ -12,6 +12,10 @@
 
 #define VoxelData uvec4
 
+const uint PH_LIGHT_TRANSMISSIVE_BLOCK_ID_FLAG = 1u << 31u;
+const uint PH_VOXEL_DATA_BLOCK_ID_MASK =
+        ~PH_LIGHT_TRANSMISSIVE_BLOCK_ID_FLAG;
+
 void voxel_data_apply_tint(inout VoxelData voxel_data, uvec4 tint) {
      voxel_data.y = ph_pack_int_color(
         ph_apply_int_tint(
@@ -22,7 +26,11 @@ void voxel_data_apply_tint(inout VoxelData voxel_data, uvec4 tint) {
 }
 
 int voxel_data_block_id(VoxelData voxel_data) {
-    return int(voxel_data.x);
+    return int(voxel_data.x & PH_VOXEL_DATA_BLOCK_ID_MASK);
+}
+
+bool voxel_data_is_light_transmissive(VoxelData voxel_data) {
+    return (voxel_data.x & PH_LIGHT_TRANSMISSIVE_BLOCK_ID_FLAG) != 0u;
 }
 
 vec4 voxel_data_albedo(VoxelData voxel_data) {
@@ -45,12 +53,25 @@ vec4 voxel_data_albedo(VoxelData voxel_data) {
     return albedo;
 }
 
-float voxel_data_visibility_transmittance(vec4 albedo) {
+float voxel_data_visibility_transmittance(VoxelData voxel_data, vec4 albedo) {
+    if (voxel_data_is_light_transmissive(voxel_data)) return 1.0f;
+
 #if defined PH_FULL_TRANSPARENCY
     return clamp(1.0f - albedo.a, 0.0f, 1.0f);
 #else
     return 1.0f;
 #endif
+}
+
+vec3 voxel_data_visibility_tint(VoxelData voxel_data, vec4 albedo) {
+    vec4 clamped_albedo = clamp(albedo, 0.0f, 1.0f);
+    if (!voxel_data_is_light_transmissive(voxel_data)) {
+        return clamped_albedo.rgb;
+    }
+
+    // Alpha is surface coverage. Uncovered area transmits white, while the
+    // covered fraction filters radiance by the material's linear albedo.
+    return mix(vec3(1.0f), clamped_albedo.rgb, clamped_albedo.a);
 }
 
 vec4 voxel_data_normal(VoxelData voxel_data) {

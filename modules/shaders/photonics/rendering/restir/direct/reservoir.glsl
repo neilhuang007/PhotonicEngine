@@ -1,4 +1,5 @@
 #include "/photonics/rendering/restir/direct/sample.glsl"
+#include "/photonics/rendering/restir/direct/reservoir_encoding.glsl"
 
 #define DIRECT_RESERVOIR_0 3
 #define DIRECT_RESERVOIR_1 4
@@ -16,9 +17,6 @@
 //ph_required: uniform sampler2D restir_direct_candidates;
 
 const float max_direct_temporal_samples = 20.0f;
-const uint direct_reservoir_light_valid_bit = 0x80000000u;
-const uint direct_reservoir_light_index_mask = 0x7fffffffu;
-
 struct DirectReservoir {
     DirectSample smple;
 
@@ -41,6 +39,14 @@ bool direct_reservoir_is_empty(DirectReservoir reservoir) {
     return direct_sample_is_empty(reservoir.smple);
 }
 
+bool direct_reservoir_is_valid_measure(float value) {
+    return value >= 0.0f && !isnan(value) && !isinf(value);
+}
+
+float direct_reservoir_sanitize_weight(float weight) {
+    return direct_reservoir_is_valid_measure(weight) ? weight : 0.0f;
+}
+
 bool direct_reservoir_stream_sample(
     inout DirectReservoir reservoir,
     DirectSample smple,
@@ -48,14 +54,22 @@ bool direct_reservoir_stream_sample(
     float inv_source_pdf,
     float random
 ) {
-    float ris_weight = target_pdf * inv_source_pdf;
-    reservoir.weight_sum += ris_weight;
+    float sanitized_target_pdf =
+            direct_reservoir_sanitize_weight(target_pdf);
+    float sanitized_inv_source_pdf =
+            direct_reservoir_sanitize_weight(inv_source_pdf);
+    float ris_weight = direct_reservoir_sanitize_weight(
+        sanitized_target_pdf * sanitized_inv_source_pdf
+    );
+    reservoir.weight_sum = direct_reservoir_sanitize_weight(
+        reservoir.weight_sum + ris_weight
+    );
     reservoir.total_samples += 1.0f;
 
     if (ris_weight > 0.0f &&
             random * reservoir.weight_sum < ris_weight) {
         reservoir.smple = smple;
-        reservoir.target_pdf = target_pdf;
+        reservoir.target_pdf = sanitized_target_pdf;
         return true;
     }
 
@@ -63,9 +77,13 @@ bool direct_reservoir_stream_sample(
 }
 
 float direct_reservoir_compute_ucw(DirectReservoir reservoir) {
-    return reservoir.target_pdf == 0.0f
-            ? 0.0f
-            : reservoir.weight_sum / reservoir.target_pdf;
+    if (!(reservoir.target_pdf > 0.0f) ||
+            !direct_reservoir_is_valid_measure(reservoir.weight_sum)) {
+        return 0.0f;
+    }
+    return direct_reservoir_sanitize_weight(
+        reservoir.weight_sum / reservoir.target_pdf
+    );
 }
 
 void direct_reservoir_finalize_initial_candidate(
@@ -86,17 +104,26 @@ bool direct_reservoir_add_sample(
     float jacobian,
     float random
 ) {
-    float weight = mis_weight * shifted_target_pdf *
-            direct_reservoir_compute_ucw(other) * jacobian;
-    result.weight_sum += weight;
+    float target_pdf = direct_reservoir_sanitize_weight(shifted_target_pdf);
+    float weight = direct_reservoir_sanitize_weight(
+        direct_reservoir_sanitize_weight(mis_weight) *
+                target_pdf *
+                direct_reservoir_compute_ucw(other) *
+                direct_reservoir_sanitize_weight(jacobian)
+    );
+    result.weight_sum = direct_reservoir_sanitize_weight(
+        result.weight_sum + weight
+    );
     result.total_samples = min(
-        result.total_samples + other.total_samples,
+        result.total_samples + direct_reservoir_sanitize_weight(
+            other.total_samples
+        ),
         max_direct_temporal_samples
     );
 
     if (random * result.weight_sum < weight) {
         result.smple = shifted_sample;
-        result.target_pdf = shifted_target_pdf;
+        result.target_pdf = target_pdf;
         return true;
     }
 
@@ -113,6 +140,7 @@ bool direct_reservoir_merge(
         frag_rt_pos,
         frag_geo_normal,
         frag_is_hand ? frag_geo_normal : frag_tex_normal,
+        frag_is_light_transmissive,
         shifted_integrand
     );
     return direct_reservoir_add_sample(
@@ -136,6 +164,7 @@ void direct_reservoir_validate_visibility(inout DirectReservoir reservoir, vec3 
         sample_pos,
         frag_geo_normal,
         frag_is_hand ? frag_geo_normal : frag_tex_normal,
+        frag_is_light_transmissive,
         integrand
     )) {
         reservoir.smple = direct_sample_empty();
@@ -163,6 +192,7 @@ vec3 direct_reservoir_get_final_color(
         sample_pos,
         geo_normal,
         tex_normal,
+        frag_is_light_transmissive,
         integrand
     );
     return integrand * direct_reservoir_compute_ucw(reservoir);
@@ -269,12 +299,11 @@ void direct_reservoir_decode(
 }
 
 bool direct_reservoir_is_finite(DirectReservoir reservoir) {
-    return !isnan(reservoir.weight_sum)
-            && !isinf(reservoir.weight_sum)
-            && !isnan(reservoir.target_pdf)
-            && !isinf(reservoir.target_pdf)
-            && !isnan(reservoir.total_samples)
-            && !isinf(reservoir.total_samples);
+    return direct_reservoir_data_is_finite(vec3(
+        reservoir.weight_sum,
+        reservoir.target_pdf,
+        reservoir.total_samples
+    ));
 }
 
 bool direct_reservoir_load(out DirectReservoir reservoir, ivec2 tex_coord) {

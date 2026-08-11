@@ -5,15 +5,12 @@
 //ph_required: uniform sampler2D prev_ph_frag_data1;
 
 #include "/photonics/utility/normal_encoding.glsl"
+#include "/photonics/rendering/frag/flags.glsl"
 
 struct FragData {
     vec4 data0;
     uvec4 data1;
 };
-
-const uint frag_is_in_world_bit = 1u << 0;
-const uint frag_bad_angle_bit = 1u << 1;
-const uint frag_is_hand_bit = 1u << 2;
 
 void frag_data_load(out FragData frag, ivec2 texel) {
     frag.data0 = texelFetch(ph_frag_data0, texel, 0);
@@ -67,4 +64,8 @@ bool frag_data_is_bad_angle(FragData frag) {
 
 bool frag_data_is_hand(FragData frag) {
     return (frag.data1.w & frag_is_hand_bit) != 0;
+}
+
+bool frag_data_is_light_transmissive(FragData frag) {
+    return (frag.data1.w & frag_is_light_transmissive_bit) != 0u;
 }

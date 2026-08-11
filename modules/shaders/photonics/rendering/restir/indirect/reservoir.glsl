@@ -100,7 +100,7 @@ void indirect_reservoir_validate_visiblity(inout IndirectReservoir reservoir, ve
         if (dot(pos_diff, pos_diff) < 0.05f) return;
 
         if (ray_result_is_transparent(result)) {
-            ray_iter_skip_block(ray);
+            ray_iter_skip_transparent(ray);
             ray_iter_offset_position(ray, ray.direction * 0.03f);
 
             continue;

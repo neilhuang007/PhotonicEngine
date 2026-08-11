@@ -82,6 +82,13 @@ public record RepeatAction(
         }
 
         @Override
+        public boolean addShaderStorageBarrier() {
+            if (hasEnded) return false;
+
+            return super.addShaderStorageBarrier();
+        }
+
+        @Override
         public boolean addBeginRepeating(int n) {
             if (hasEnded) return false;
 

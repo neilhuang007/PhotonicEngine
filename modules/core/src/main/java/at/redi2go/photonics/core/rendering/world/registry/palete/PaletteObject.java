@@ -46,7 +46,7 @@ public class PaletteObject extends PaletteEntry implements WorldObject, VoxelTre
                 continue;
             }
 
-            faceData.x = face.blockId();
+            faceData.x = face.packedBlockId();
             faceData.y = face.color();
             faceData.z = face.normal();
             faceData.w = face.specular();

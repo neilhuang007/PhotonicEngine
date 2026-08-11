@@ -4,6 +4,7 @@ import at.redi2go.photonics.common.iris.pipeline.IrisFactoryImpl;
 import at.redi2go.photonics.common.iris.pipeline.builder.actions.FlipAction;
 import at.redi2go.photonics.common.iris.pipeline.builder.actions.RepeatAction;
 import at.redi2go.photonics.common.iris.pipeline.builder.actions.RunAction;
+import at.redi2go.photonics.common.iris.pipeline.builder.actions.ShaderStorageBarrierAction;
 import at.redi2go.photonics.common.iris.pipeline.impl.PipelineAction;
 import at.redi2go.photonics.core.iris.pipeline.texture.IrisFramebuffer;
 import com.google.common.collect.ImmutableList;
@@ -102,6 +103,15 @@ public abstract class AbstractActionBuilderConsumer implements PipelineActionBui
     public boolean addThenRun(Runnable action) {
         if (shouldCreateAction(e -> e.addThenRun(action))) {
             actions.add(new RunAction(action));
+        }
+
+        return true;
+    }
+
+    @Override
+    public boolean addShaderStorageBarrier() {
+        if (shouldCreateAction(PipelineActionBuilder::addShaderStorageBarrier)) {
+            actions.add(ShaderStorageBarrierAction.INSTANCE);
         }
 
         return true;

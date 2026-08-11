@@ -10,6 +10,8 @@
 
 #define PH_RAY_DEFAULT_ITERATIONS 100
 const float ph_16_rcp = 1.0f / 16.0f;
+const float ph_hit_block_epsilon = ph_16_rcp * 0.01f;
+const ivec3 ph_no_transmissive_block = ivec3(0x7fffffff);
 
 struct RayIterator {
     vec3 position;
@@ -18,6 +20,7 @@ struct RayIterator {
 
     RayResult hit;
     int state; // this could improved, do I care? no
+    ivec3 last_transmissive_block;
 };
 
 void _ray_iter_setup(inout RayIterator ray) {
@@ -33,16 +36,20 @@ void _ray_iter_setup(inout RayIterator ray) {
 }
 
 void ray_iter_begin(out RayIterator ray, vec3 position, vec3 direction) {
-    ray.position = position;
-    ray.direction = direction;
-    ray.iterations = PH_RAY_DEFAULT_ITERATIONS;
-    ray.hit = ph_ray_miss;
-
+    ray = RayIterator(
+        position,
+        direction,
+        PH_RAY_DEFAULT_ITERATIONS,
+        ph_ray_miss,
+        PH_RAY_STATE_READY,
+        ph_no_transmissive_block
+    );
     _ray_iter_setup(ray);
 }
 
 void ray_iter_set_position(inout RayIterator ray, vec3 position) {
     ray.position = position;
+    ray.last_transmissive_block = ph_no_transmissive_block;
 }
 
 void ray_iter_offset_position(inout RayIterator ray, vec3 offset) {
@@ -51,6 +58,7 @@ void ray_iter_offset_position(inout RayIterator ray, vec3 offset) {
 
 void ray_iter_set_direction(inout RayIterator ray, vec3 direction) {
     ray.direction = direction;
+    ray.last_transmissive_block = ph_no_transmissive_block;
     _ray_iter_setup(ray);
 }
 
@@ -118,9 +126,8 @@ void _ray_iter_trace_next(inout RayIterator ray, vec3 target) {
 
         int adv_scale_exp = scale_exp;
 
-        const uint64_t zero_64 = uint64_t(0);
-        const uint64_t index_mask_64 = uint64_t(0x00330033u);
-        if (((node.child_mask >> (child_index & 42u)) & index_mask_64) == zero_64) adv_scale_exp++;
+        if ((ph_shift_right_64(node.child_mask, child_index & 42u).x & 0x00330033u) == 0u)
+            adv_scale_exp++;
 
         vec3 cell_min = ph_floor_scale(pos, adv_scale_exp);
         vec3 side_dist = (cell_min - origin) * dir_inv;
@@ -231,11 +238,38 @@ void ray_iter_skip_voxel(inout RayIterator ray) {
     _ray_iter_skip_unit(ray, 16.0f);
 }
 
+void ray_iter_skip_transparent(inout RayIterator ray) {
+#if defined PH_FULL_TRANSPARENCY
+    ray_iter_skip_voxel(ray);
+#else
+    ray_iter_skip_block(ray);
+#endif
+}
+
 bool ray_iter_is_in_bounds(RayIterator ray) {
     return ray.state != PH_RAY_STATE_OUT_OF_BOUNDS;
 }
 
-void ray_iter_apply_transparency(inout vec4 accumulator, vec4 albedo) {
+void ray_iter_accumulate_transparency_tint(
+    inout RayIterator ray,
+    inout vec4 accumulator,
+    VoxelData voxel_data,
+    vec4 albedo
+) {
+    if (voxel_data_is_light_transmissive(voxel_data)) {
+        ivec3 block_position = ivec3(floor(
+            ray.position + sign(ray.direction) * ph_hit_block_epsilon
+        ));
+        // VOXEL traversal can hit several surface voxels in one block. They
+        // describe one material volume, not a stack of independent panes.
+        if (all(equal(block_position, ray.last_transmissive_block))) return;
+
+        ray.last_transmissive_block = block_position;
+        if (accumulator.a == 0.0f) accumulator = vec4(1.0f);
+        accumulator.rgb *= voxel_data_visibility_tint(voxel_data, albedo);
+        return;
+    }
+
     if (accumulator.a != 0) {
         float mix_factor = (1 - accumulator.a) * albedo.a;
         accumulator.rgb = mix(accumulator.rgb, albedo.rgb, mix_factor);

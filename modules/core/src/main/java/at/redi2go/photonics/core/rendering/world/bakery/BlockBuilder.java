@@ -14,6 +14,8 @@ public interface BlockBuilder {
 
     BlockBuilder useBlockId(int blockId);
 
+    BlockBuilder useLightTransmissive(boolean lightTransmissive);
+
     default BlockBuilder useOffset(Vector3f offset) {
         return useOffset(offset.x, offset.y, offset.z);
     }

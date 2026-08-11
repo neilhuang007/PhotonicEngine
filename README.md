@@ -10,8 +10,8 @@ run configuration and Quick Plays the `backup` world from
 .\scripts\run-shader-game-test.ps1
 ```
 
-The runner has no renderer instrumentation or engine-specific metrics. It
-passes only when the engine-side test automation writes this JSON file before
+The property-gated client reporter waits for the active ReSTIR pipeline to
+settle, samples two nearby camera positions, and writes this JSON file before
 the client exits:
 
 `modules/versions/1_21_11/fabric/run/automation/shader-game-test-report.json`
@@ -19,16 +19,21 @@ the client exits:
 ```json
 {
   "success": true,
-  "failureReason": ""
+  "failureReason": "",
+  "metrics": {}
 }
 ```
 
 `success` is required and must be a boolean; `failureReason` is optional and
-is surfaced if the test fails. A future engine-side agent can add any metrics
-it needs without changing the harness. Until that reporter is attached, the
-runner deliberately fails with `missing-report` instead of reporting a false
-pass. It also refuses to launch while the test world is already open, avoiding
-concurrent writes. For interactive reporter development, use:
+is surfaced if the test fails. The reporter validates the rendered framebuffer
+and the ReSTIR lighting attachment for finite, non-black, chromatically stable,
+converging output. It also reads the direct-reservoir target/confidence channel
+to require finite reservoirs that accumulate temporal confidence without
+exceeding the Falcor confidence cap. The report records both camera samples,
+shader-pack settings, convergence statistics, and reservoir confidence
+statistics. The runner fails on a missing or invalid report and refuses to
+launch while the test world is already open, avoiding concurrent writes. For
+interactive reporter development, use:
 
 ```powershell
 .\scripts\run-shader-game-test.ps1 -LaunchOnly

@@ -85,6 +85,13 @@ public class IrisPipelineBuilderImpl extends AbstractActionBuilderConsumer imple
     }
 
     @Override
+    public IrisPipeline.Builder thenShaderStorageBarrier() {
+        addShaderStorageBarrier();
+
+        return this;
+    }
+
+    @Override
     public IrisPipeline.Builder repeat(int n, Consumer<IrisPipeline.Builder> builderAction) {
         addBeginRepeating(n);
         scope(builderAction);

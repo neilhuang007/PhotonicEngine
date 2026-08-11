@@ -31,7 +31,7 @@ Light light_list_get(int index) {
 }
 
 int light_list_map_index(int old_index) {
-    if (old_index < 0 || old_index > light_list_size) return -1;
+    if (old_index < 0 || old_index >= light_list_size) return -1;
 
     return ph_light_mapping_array[old_index];
 }

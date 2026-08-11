@@ -1,5 +1,7 @@
 //TODO: DEPRECATED; REMOVE IN FUTURE RELEASE
 
+//ph_required: uniform sampler2D depthtex0;
+
 // HEAD
 
 /*

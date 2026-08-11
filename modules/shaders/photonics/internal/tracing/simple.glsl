@@ -28,10 +28,15 @@ bool trace_light_vis(
             VoxelData voxel_data = ray_result_voxel_data(result);
             vec4 albedo = voxel_data_albedo(voxel_data);
 
-            light_transmittance *= voxel_data_visibility_transmittance(albedo);
-            ray_iter_apply_transparency(running_tint_color, albedo);
+            light_transmittance *= voxel_data_visibility_transmittance(voxel_data, albedo);
+            ray_iter_accumulate_transparency_tint(
+                ray,
+                running_tint_color,
+                voxel_data,
+                albedo
+            );
 
-            ray_iter_skip_block(ray);
+            ray_iter_skip_transparent(ray);
             ray_iter_offset_position(ray, ray.direction * 0.03f);
 
             continue;

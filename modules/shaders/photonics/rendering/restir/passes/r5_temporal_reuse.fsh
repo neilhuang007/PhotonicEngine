@@ -20,7 +20,29 @@ layout(location = INDIRECT_RESERVOIR_1) out uvec3 gi_reservoir_1;
 
 void main() {
     setup_frag_data(0);
-    if (!frag_is_in_world) discard;
+    if (!frag_is_in_world) {
+#if defined PH_ENABLE_BLOCKLIGHT
+        DirectReservoir direct_result = direct_reservoir_empty();
+        direct_reservoir_encode(
+            direct_result,
+            di_reservoir_0,
+            di_reservoir_1
+        );
+        direct_reconnection_store_current(
+            ph_splat_pixel_index(frag_tex_coord),
+            direct_reconnection_empty()
+        );
+#endif
+#if defined PH_ENABLE_RESTIR_GI
+        IndirectReservoir indirect_result = indirect_reservoir_empty();
+        indirect_reservoir_encode(
+            indirect_result,
+            gi_reservoir_0,
+            gi_reservoir_1
+        );
+#endif
+        return;
+    }
 
 #if defined PH_ENABLE_BLOCKLIGHT
     DirectReservoir direct_result;

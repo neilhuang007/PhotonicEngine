@@ -4,8 +4,29 @@
 #include "/photonics/utility/normal_encoding.glsl"
 #include "/photonics/rendering/frag/frag_data.glsl"
 
+#define PH_VOXEL_COLOR_MODIFIER_DISABLED
+#define PH_LIGHT_MODIFIER_DISABLED
+#define PH_ATTENUATION_MODIFIER_DISABLED
+#include "/photonics/tracing.glsl"
+#undef PH_ATTENUATION_MODIFIER_DISABLED
+#undef PH_LIGHT_MODIFIER_DISABLED
+#undef PH_VOXEL_COLOR_MODIFIER_DISABLED
+
 layout(location = 0) out vec4 frag_data0_out;
 layout(location = 1) out vec4 frag_data1_out;
+
+bool classify_primary_surface_transmission(
+    vec3 rt_position,
+    vec3 geometry_normal
+) {
+    RayIterator primary_ray;
+    ray_iter_begin(primary_ray, rt_position, -geometry_normal);
+    RayResult primary_hit = ray_iter_next(primary_ray);
+    return ray_result_is_hit(primary_hit) &&
+            voxel_data_is_light_transmissive(
+                ray_result_voxel_data(primary_hit)
+            );
+}
 
 void load_frag_data(
     out vec3 frag_geo_normal,
@@ -72,6 +93,10 @@ void ph_encode_frag(out vec4 data0, out uvec4 data1) {
     data1.w |= frag_is_in_world_bit;
     data1.w |= frag_is_bad_angle ? frag_bad_angle_bit : 0;
     data1.w |= frag_is_hand ? frag_is_hand_bit : 0;
+    data1.w |= !frag_is_hand && classify_primary_surface_transmission(
+            frag_rt_pos,
+            frag_geo_normal
+    ) ? frag_is_light_transmissive_bit : 0u;
 }
 
 void main() {

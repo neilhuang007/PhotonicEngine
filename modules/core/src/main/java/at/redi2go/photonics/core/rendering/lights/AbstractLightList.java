@@ -57,6 +57,7 @@ public abstract class AbstractLightList implements Runnable, RenderingComponent 
 
     protected LightList lights;
     protected LightList mostRecentLights;
+    private volatile long contentGeneration;
 
     @SuppressWarnings("UnstableApiUsage")
     public AbstractLightList(
@@ -311,11 +312,16 @@ public abstract class AbstractLightList implements Runnable, RenderingComponent 
 
             if (lights != mostRecentLights) {
                 mostRecentLights = lights;
+                contentGeneration++;
                 clearMapping();
             }
         } finally {
             lock.unlock();
         }
+    }
+
+    public long contentGeneration() {
+        return contentGeneration;
     }
 
     @Override

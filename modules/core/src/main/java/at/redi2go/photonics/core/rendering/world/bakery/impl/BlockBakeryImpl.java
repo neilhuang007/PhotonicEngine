@@ -80,6 +80,7 @@ public class BlockBakeryImpl implements BlockBakery {
         private int currentBlockId = -1;
         private AtlasTexture currentTexture = null;
         private long currentTextureHash = 0;
+        private boolean currentBlockLightTransmissive;
 
         private int vertexCount = 0;
         private long vertexHash = 0;
@@ -179,6 +180,15 @@ public class BlockBakeryImpl implements BlockBakery {
             currentBlockId = blockId;
             submitState(new BlockIdChange(blockId));
 
+            return this;
+        }
+
+        @Override
+        public BlockBuilder useLightTransmissive(boolean lightTransmissive) {
+            if (currentBlockLightTransmissive == lightTransmissive) return this;
+
+            currentBlockLightTransmissive = lightTransmissive;
+            submitState(new LightTransmissionChange(lightTransmissive));
             return this;
         }
 
@@ -352,7 +362,13 @@ public class BlockBakeryImpl implements BlockBakery {
                         voxelPos.sub(tri[0]);
 
                         var baryPos = BaryPos.from(voxelPos, ba, ca, n);
-                        var textureData = sample(texture, currentBlockId, tri, baryPos);
+                        var textureData = sample(
+                                texture,
+                                currentBlockId,
+                                currentBlockLightTransmissive,
+                                tri,
+                                baryPos
+                        );
                         if (textureData == null) continue;
 
                         textureData = textureData.withTint(tint);
@@ -404,6 +420,19 @@ public class BlockBakeryImpl implements BlockBakery {
             }
         }
 
+        private static class LightTransmissionChange extends StateChange {
+            private final boolean lightTransmissive;
+
+            private LightTransmissionChange(boolean lightTransmissive) {
+                this.lightTransmissive = lightTransmissive;
+            }
+
+            @Override
+            public void apply(MeshResultImpl builder) {
+                builder.currentBlockLightTransmissive = lightTransmissive;
+            }
+        }
+
         private static int signBit(float value) {
             return Float.floatToRawIntBits(value) & Integer.MIN_VALUE;
         }
@@ -411,6 +440,7 @@ public class BlockBakeryImpl implements BlockBakery {
         private static TextureData sample(
                 AtlasTexture texture,
                 int blockId,
+                boolean lightTransmissive,
                 Vertex[] tri,
                 BaryPos barycentricPos
         ) {
@@ -422,7 +452,8 @@ public class BlockBakeryImpl implements BlockBakery {
             float u = Math.fma(w1, tri[2].u(), Math.fma(w2, tri[1].u(), w3 * tri[0].u()));
             float v = Math.fma(w1, tri[2].v(), Math.fma(w2, tri[1].v(), w3 * tri[0].v()));
 
-            return texture.sample(blockId, u, v);
+            return texture.sample(blockId, u, v)
+                    .withLightTransmissive(lightTransmissive);
         }
     }
 }

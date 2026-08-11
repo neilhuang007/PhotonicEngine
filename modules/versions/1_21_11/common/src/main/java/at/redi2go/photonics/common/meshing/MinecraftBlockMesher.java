@@ -5,7 +5,9 @@ import at.redi2go.photonics.api.mc.world.level.IBlockAndTintGetter;
 import at.redi2go.photonics.api.mc.world.level.IBlockState;
 import at.redi2go.photonics.core.rendering.world.bakery.BlockBuilder;
 import at.redi2go.photonics.core.rendering.world.bakery.BlockMesher;
+import net.minecraft.client.renderer.ItemBlockRenderTypes;
 import net.minecraft.client.renderer.block.ModelBlockRenderer;
+import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.BlockAndTintGetter;
 import net.minecraft.world.level.block.state.BlockState;
@@ -48,6 +50,9 @@ public class MinecraftBlockMesher implements BlockMesher<McMeshState> {
             IBlockAndTintGetter blockAndTintGetter,
             BlockBuilder blockBuilder
     ) {
+        blockBuilder.useLightTransmissive(isLightTransmissive(
+                (BlockState) blockState
+        ));
         RENDERERS.get().meshBlock(
                 meshState,
                 blockChunkOffset,
@@ -56,5 +61,10 @@ public class MinecraftBlockMesher implements BlockMesher<McMeshState> {
                 (BlockAndTintGetter) blockAndTintGetter,
                 blockBuilder
         );
+    }
+
+    static boolean isLightTransmissive(BlockState blockState) {
+        return ItemBlockRenderTypes.getChunkRenderType(blockState) ==
+                ChunkSectionLayer.TRANSLUCENT;
     }
 }

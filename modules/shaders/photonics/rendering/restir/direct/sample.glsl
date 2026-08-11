@@ -29,91 +29,55 @@ Light direct_sample_get_light(DirectSample smple) {
 
 vec3 direct_sample_get_position(
     DirectSample smple,
-    Light light,
-    vec3 sample_pos
+    Light light
 ) {
 #ifdef PH_RESTIR_SOFT_SHADOWS
     vec3 light_position = floor(light.position) + 0.5f;
-    vec3 sample_direction = light_position - sample_pos;
-    float sample_distance_squared =
-            dot(sample_direction, sample_direction);
-    if (!(sample_distance_squared > 1e-12f)) {
-        return light_position;
-    }
-
-    vec3 sample_normal = sample_direction *
-            inversesqrt(sample_distance_squared);
-    vec3 basis_axis = abs(sample_normal.y) < 0.999f
-            ? vec3(0.0f, 1.0f, 0.0f)
-            : vec3(1.0f, 0.0f, 0.0f);
-    vec3 sample_tangent = normalize(cross(
-        basis_axis,
-        sample_normal
-    ));
-    vec3 sample_bitangent = cross(
-        sample_normal,
-        sample_tangent
-    );
-
-    float point_radius = ph_light_jitter_radius * sqrt(smple.uv.x);
+    float sample_z = 1.0f - 2.0f * smple.uv.x;
+    float sample_radius = sqrt(max(0.0f, 1.0f - sample_z * sample_z));
     float point_angle = smple.uv.y * 2.0f * 3.14159265f;
-    vec2 disk_point = vec2(
-        point_radius * cos(point_angle),
-        point_radius * sin(point_angle)
+    vec3 sphere_point = vec3(
+        sample_radius * cos(point_angle),
+        sample_z,
+        sample_radius * sin(point_angle)
     );
-
-    return light_position +
-            disk_point.x * sample_tangent +
-            disk_point.y * sample_bitangent;
+    return light_position + ph_light_jitter_radius * sphere_point;
 #else
     return light.position;
 #endif
 }
 
-vec3 direct_sample_get_color(
-    DirectSample smple,
-    Light light,
+void direct_sample_orient_shading_normals(
+    vec3 light_position,
     vec3 sample_pos,
-    vec3 geo_normal,
-    vec3 tex_normal
+    bool light_transmissive_surface,
+    inout vec3 geo_normal,
+    inout vec3 tex_normal
 ) {
-    if (!light_is_valid(light))
-        return vec3(0.0f);
-
-    vec3 light_position = direct_sample_get_position(
-        smple,
-        light,
-        sample_pos
-    );
-    return light_sample_at(
-        light,
-        sample_pos,
-        light_position,
-        geo_normal,
-        tex_normal
-    );
+    vec3 to_light = light_position - sample_pos;
+    if (light_transmissive_surface &&
+            dot(geo_normal, to_light) < 0.0f) {
+        geo_normal = -geo_normal;
+        tex_normal = -tex_normal;
+    }
 }
 
-float direct_sample_get_weight(
+bool direct_sample_get_visible_color_at_position(
     DirectSample smple,
+    vec3 light_position,
     vec3 sample_pos,
     vec3 geo_normal,
-    vec3 tex_normal
-) {
-    if (direct_sample_is_empty(smple))
-        return 0.0f;
-
-    Light light = direct_sample_get_light(smple);
-    vec3 color = direct_sample_get_color(smple, light, sample_pos, geo_normal, tex_normal);
-
-    return direct_sample_weight(color);
-}
+    vec3 tex_normal,
+    bool light_transmissive_surface,
+    out vec3 color
+);
 
 bool direct_sample_get_visible_color(
     DirectSample smple,
     vec3 sample_pos,
     vec3 geo_normal,
     vec3 tex_normal,
+    bool light_transmissive_surface,
     out vec3 color
 ) {
     color = vec3(0.0f);
@@ -124,9 +88,34 @@ bool direct_sample_get_visible_color(
 
     vec3 light_position = direct_sample_get_position(
         smple,
-        light,
-        sample_pos
+        light
     );
+    return direct_sample_get_visible_color_at_position(
+        smple,
+        light_position,
+        sample_pos,
+        geo_normal,
+        tex_normal,
+        light_transmissive_surface,
+        color
+    );
+}
+
+bool direct_sample_get_visible_color_at_position(
+    DirectSample smple,
+    vec3 light_position,
+    vec3 sample_pos,
+    vec3 geo_normal,
+    vec3 tex_normal,
+    bool light_transmissive_surface,
+    out vec3 color
+) {
+    color = vec3(0.0f);
+    if (direct_sample_is_empty(smple)) return false;
+
+    Light light = direct_sample_get_light(smple);
+    if (!light_is_valid(light)) return false;
+
     vec3 tint_color;
     float transmittance;
     if (!trace_light_vis(
@@ -138,10 +127,17 @@ bool direct_sample_get_visible_color(
             transmittance
     )) return false;
 
-    color = direct_sample_get_color(
-        smple,
+    direct_sample_orient_shading_normals(
+        light_position,
+        sample_pos,
+        light_transmissive_surface,
+        geo_normal,
+        tex_normal
+    );
+    color = light_sample_at(
         light,
         sample_pos,
+        light_position,
         geo_normal,
         tex_normal
     ) * tint_color * transmittance;

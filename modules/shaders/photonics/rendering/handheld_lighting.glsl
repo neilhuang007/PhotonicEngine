@@ -29,7 +29,8 @@ void handheld_sample_init(inout HandheldSample smple, Light light, bool right_ha
         return;
     }
 
-    mat4 direction_transformation_matrix = inverse(gbufferProjection * gbufferModelView);
+    mat4 direction_transformation_matrix =
+        gbufferModelViewInverse * gbufferProjectionInverse;
 
     vec4 direction_vert_out = direction_transformation_matrix * vec4(right_hand ? 1.0f : -1.0f, -1.0f, 0.0f, 1.0f);
     direction_vert_out.w = 1.0f / direction_vert_out.w;
@@ -95,9 +96,14 @@ bool handheld_sample_trace(in HandheldSample smple, out vec3 tint_color, out flo
             VoxelData voxel_data = ray_result_voxel_data(result);
             vec4 albedo = voxel_data_albedo(voxel_data);
 
-            light_transmittance *= voxel_data_visibility_transmittance(albedo);
-            ray_iter_apply_transparency(running_tint_color, albedo);
-            ray_iter_skip_block(ray);
+            light_transmittance *= voxel_data_visibility_transmittance(voxel_data, albedo);
+            ray_iter_accumulate_transparency_tint(
+                ray,
+                running_tint_color,
+                voxel_data,
+                albedo
+            );
+            ray_iter_skip_transparent(ray);
 
             continue;
         }

@@ -86,6 +86,12 @@ public interface IrisPipeline {
             return condition.getAsBoolean() ? thenRun(action) : this;
         }
 
+        Builder thenShaderStorageBarrier();
+
+        default Builder thenShaderStorageBarrier(BooleanSupplier condition) {
+            return condition.getAsBoolean() ? thenShaderStorageBarrier() : this;
+        }
+
         Builder repeat(int n, Consumer<IrisPipeline.Builder> builderAction);
 
         default Builder repeat(int n, BooleanSupplier condition, Consumer<IrisPipeline.Builder> builderAction) {

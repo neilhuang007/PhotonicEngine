@@ -55,6 +55,8 @@ public class WorldCompiler implements Runnable, RenderingComponent {
     private final ReentrantLock uploadLock = new ReentrantLock();
     private final Condition uploadDone = uploadLock.newCondition();
     private boolean canUpload = true;
+    private boolean contentChanged;
+    private volatile long contentGeneration;
 
     private Vector3i iorigin = null;
     private WorldOrigin offset = null;
@@ -99,6 +101,10 @@ public class WorldCompiler implements Runnable, RenderingComponent {
 
     public WorldOrigin origin() {
         return mostRecentOrigin;
+    }
+
+    public long contentGeneration() {
+        return contentGeneration;
     }
 
     private void setOrigin(Vector3i origin) {
@@ -251,6 +257,7 @@ public class WorldCompiler implements Runnable, RenderingComponent {
 
         try {
             canUpload = true;
+            contentChanged = true;
             uniformUpdater.updateNextFrame();
             uploadDone.await();
         } finally {
@@ -278,6 +285,11 @@ public class WorldCompiler implements Runnable, RenderingComponent {
             mostRecentMaxBlock = new Vector3f(maxBlock);
 
             mostRecentBlockContainerScale = 21 - (treeManager.depth() - (VoxelTreeEntry.BLOCK_CONTAINER_DEPTH) << 1);
+
+            if (contentChanged) {
+                contentChanged = false;
+                contentGeneration++;
+            }
 
             uploadDone.signalAll();
         } finally {

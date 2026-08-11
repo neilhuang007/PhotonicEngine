@@ -7,16 +7,19 @@ layout(local_size_x = 16, local_size_y = 16) in;
 //ph_required: uniform float viewWidth;
 //ph_required: uniform float viewHeight;
 //ph_required: uniform int frameCounter;
+//ph_required: uniform int ph_reservoir_splatting_history_valid;
 //ph_required: uniform vec3 cameraPosition;
 //ph_required: uniform vec3 previousCameraPosition;
 //ph_required: uniform mat4 gbufferModelView;
 //ph_required: uniform mat4 gbufferProjection;
+//ph_required: uniform usampler2D prev_restir_direct_reservoirs0;
 //ph_required: uniform sampler2D prev_restir_direct_reservoirs1;
 
 #define PH_VOXEL_COLOR_MODIFIER_DISABLED
 #define PH_LIGHT_MODIFIER_DISABLED
 #define PH_ATTENUATION_MODIFIER_DISABLED
 #include "/photonics/tracing.glsl"
+#include "/photonics/rendering/restir/direct/reservoir_encoding.glsl"
 #include "/photonics/rendering/restir/reservoir_splatting/buffers.glsl"
 #include "/photonics/rendering/restir/reservoir_splatting/reconnection.glsl"
 
@@ -53,23 +56,32 @@ bool current_camera_sees_primary_hit(DirectReconnection reconnection) {
 }
 
 void main() {
-    if (frameCounter == 0) return;
+    if (ph_reservoir_splatting_history_valid == 0) return;
 
     ivec2 source_pixel = ivec2(gl_GlobalInvocationID.xy);
     if (!ph_splat_pixel_in_bounds(source_pixel)) return;
 
-    float previous_target_pdf = texelFetch(
+    uvec2 previous_sample_data = texelFetch(
+        prev_restir_direct_reservoirs0,
+        source_pixel,
+        0
+    ).rg;
+    vec3 previous_reservoir_data = texelFetch(
         prev_restir_direct_reservoirs1,
         source_pixel,
         0
-    ).g;
-    if (previous_target_pdf == 0.0f) return;
+    ).rgb;
+    if (!direct_reservoir_encoding_is_reusable(
+            previous_sample_data,
+            previous_reservoir_data
+    )) return;
 
     uint source_index = ph_splat_pixel_index(source_pixel);
     DirectReconnection reconnection = direct_reconnection_load_previous(
         source_index
     );
-    if (!direct_reconnection_is_in_world(reconnection) ||
+    if (!direct_reconnection_is_finite(reconnection) ||
+            !direct_reconnection_is_in_world(reconnection) ||
             direct_reconnection_is_hand(reconnection)) return;
 
     vec2 fractional_pixel;

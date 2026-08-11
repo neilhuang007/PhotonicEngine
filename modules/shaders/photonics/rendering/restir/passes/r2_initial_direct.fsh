@@ -32,12 +32,16 @@ void regir_stream_local_light_sample(
     }
 
     DirectSample smple = DirectSample(light_index, uv);
-    float target = direct_sample_get_weight(
+    vec3 integrand;
+    direct_sample_get_visible_color(
         smple,
         frag_rt_pos,
         frag_geo_normal,
-        frag_tex_normal
+        frag_tex_normal,
+        frag_is_light_transmissive,
+        integrand
     );
+    float target = direct_sample_weight(integrand);
     direct_reservoir_stream_sample(
         reservoir,
         smple,
@@ -49,14 +53,15 @@ void regir_stream_local_light_sample(
 
 void regir_finalize_initial_reservoir(inout DirectReservoir reservoir) {
     direct_reservoir_finalize_initial_candidate(reservoir);
-    direct_reservoir_validate_visibility(reservoir, frag_rt_pos);
 }
 
 void main() {
     setup_frag_data(0);
-    if (!frag_is_in_world) discard;
-
     DirectReservoir reservoir = direct_reservoir_empty();
+    if (!frag_is_in_world) {
+        direct_candidate = direct_reservoir_encode_candidate(reservoir);
+        return;
+    }
 
     if (light_list_size > 0) {
         ReGIRRandomSamplerState random_sampler =

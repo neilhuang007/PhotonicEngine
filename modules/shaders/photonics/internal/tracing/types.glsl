@@ -1,6 +1,3 @@
-// TODO support without int64
-#extension GL_ARB_gpu_shader_int64 : require
-
 uint ph_get_node_cell_index(vec3 pos, int scale) {
     uvec3 cell_pos = (floatBitsToUint(pos) >> scale) & 3u;
     return cell_pos.x + (cell_pos.z << 2) + (cell_pos.y << 4);
@@ -11,20 +8,46 @@ vec3 ph_floor_scale(vec3 pos, int scale) {
     return uintBitsToFloat(floatBitsToUint(pos) & mask);
 }
 
-uint ph_bitCount_64(uint64_t mask, uint width) {
-    uvec2 low_high = unpackUint2x32(mask);
-    uint mask_32 = low_high[0];
-
-    uint count = 0;
-
-    if (width >= 32) {
-        count = bitCount(mask_32);
-        mask_32 = low_high[1];
+uvec2 ph_shift_right_64(uvec2 value, uint shift) {
+    if (shift == 0u) {
+        return value;
     }
 
-    uint m = 1u << (width & 31u);
-    count+= bitCount(mask_32 & (m - 1u));
-    return count;
+    if (shift < 32u) {
+        return uvec2(
+            (value.x >> shift) | (value.y << (32u - shift)),
+            value.y >> shift
+        );
+    }
+
+    if (shift < 64u) {
+        return uvec2(value.y >> (shift - 32u), 0u);
+    }
+
+    return uvec2(0u);
+}
+
+uint ph_bitCount_64(uvec2 mask, uint width) {
+    if (width == 0u) {
+        return 0u;
+    }
+
+    if (width <= 32u) {
+        if (width == 32u) {
+            return bitCount(mask.x);
+        }
+
+        return bitCount(mask.x & ((1u << width) - 1u));
+    }
+
+    uint count = bitCount(mask.x);
+    uint upper_width = width - 32u;
+
+    if (upper_width >= 32u) {
+        return count + bitCount(mask.y);
+    }
+
+    return count + bitCount(mask.y & ((1u << upper_width) - 1u));
 }
 
 vec3 ph_get_mirrored_pos(vec3 pos, vec3 dir, bool range_check) {
@@ -55,7 +78,7 @@ bool ph_is_target(vec3 pos, vec3 target) {
 
 struct RtNode {
     uint data0;
-    uint64_t child_mask;
+    uvec2 child_mask;
 };
 
 bool rt_node_is_leaf(RtNode node) {
@@ -67,10 +90,12 @@ uint rt_node_child_ptr(RtNode node) {
 }
 
 bool rt_node_has_child(RtNode node, uint child_index) {
-    const uint64_t zero_64 = uint64_t(0u);
-    const uint64_t one_64 = uint64_t(1u);
+    if (child_index < 32u) {
+        return ((node.child_mask.x >> child_index) & 1u) != 0u;
+    }
 
-    return ((node.child_mask >> child_index) & one_64) != zero_64;
+    child_index -= 32u;
+    return ((node.child_mask.y >> child_index) & 1u) != 0u;
 }
 
 uint rt_node_get_child(RtNode node, uint child_index, int scale_exp) {
@@ -82,11 +107,9 @@ uint rt_node_get_child(RtNode node, uint child_index, int scale_exp) {
 RtNode load_rt_node(uint index) {
     return RtNode(
         ph_world_buffer[index],
-        packUint2x32(
-            uvec2(
-                ph_world_buffer[index + 1],
-                ph_world_buffer[index + 2]
-            )
+        uvec2(
+            ph_world_buffer[index + 1],
+            ph_world_buffer[index + 2]
         )
     );
 }
@@ -96,7 +119,11 @@ struct LeafNode {
 };
 
 bool leaf_node_is_transparent(LeafNode node) {
+#if defined PH_USE_TRANSPARENCY
     return (node.data0 & 1u) != 0;
+#else
+    return false;
+#endif
 }
 
 uint leaf_node_palette_entry(LeafNode node) {

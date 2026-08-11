@@ -6,10 +6,32 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class EmissiveBlockShaderRegressionTest {
+    @Test
+    void handheldRayUsesAvailableInverseViewProjectionMatrices()
+            throws IOException {
+        String handheld = readShader("rendering/handheld_lighting.glsl");
+
+        assertTrue(
+                handheld.contains(
+                        "gbufferModelViewInverse * gbufferProjectionInverse"
+                ),
+                "the handheld pass must reconstruct world-space directions " +
+                        "from the inverse matrices supplied to deferred passes"
+        );
+        assertFalse(
+                handheld.contains(
+                        "inverse(gbufferProjection * gbufferModelView)"
+                ),
+                "the handheld pass must not require undeclared forward " +
+                        "matrices or invert them per fragment"
+        );
+    }
+
     @Test
     void transparentLightTargetTerminatesVisibilityRay() throws IOException {
         String tracing = readShader("internal/tracing/simple.glsl");
@@ -49,16 +71,19 @@ class EmissiveBlockShaderRegressionTest {
         String iterator = readShader("internal/tracing/iterator.glsl");
 
         int begin = iterator.indexOf("void ray_iter_begin(");
-        int initialMiss = iterator.indexOf("ray.hit = ph_ray_miss;", begin);
+        int initializer = iterator.indexOf("ray = RayIterator(", begin);
+        int initialMiss = iterator.indexOf("ph_ray_miss", initializer);
         int setup = iterator.indexOf("_ray_iter_setup(ray);", begin);
         int trace = iterator.indexOf("void _ray_iter_trace_next(");
         int traceMiss = iterator.indexOf("ray.hit = ph_ray_miss;", trace);
         int iterationCheck = iterator.indexOf("if (ray.iterations == 0)", trace);
 
         assertTrue(
-                begin >= 0 && initialMiss > begin && initialMiss < setup,
-                "new visibility rays must have a defined miss result before " +
-                        "setup can early-out as out of bounds"
+                begin >= 0 && initializer > begin && initialMiss > initializer
+                        && initialMiss < setup,
+                "new visibility rays must be fully initialized, including a " +
+                        "defined miss result, before setup can early-out as " +
+                        "out of bounds"
         );
         assertTrue(
                 trace >= 0 && traceMiss > trace &&
@@ -73,21 +98,70 @@ class EmissiveBlockShaderRegressionTest {
             throws IOException {
         String palette = readShader("palette.glsl");
         String tracing = readShader("internal/tracing/simple.glsl");
+        String types = readShader("internal/tracing/types.glsl");
+        String iterator = readShader("internal/tracing/iterator.glsl");
         String handheld = readShader("rendering/handheld_lighting.glsl");
         String transmittanceUpdate = "light_transmittance *= " +
-                "voxel_data_visibility_transmittance(albedo);";
+                "voxel_data_visibility_transmittance(voxel_data, albedo);";
 
         assertTrue(
                 palette.contains(
-                        "float voxel_data_visibility_transmittance(vec4 albedo)"
+                        "const uint PH_LIGHT_TRANSMISSIVE_BLOCK_ID_FLAG"
+                ),
+                "material light transmission must be encoded in palette " +
+                        "block-id metadata, not inferred from sampled alpha"
+        );
+        assertTrue(
+                palette.contains(
+                        "const uint PH_VOXEL_DATA_BLOCK_ID_MASK"
+                ),
+                "shader block-id reads must mask out palette metadata flags"
+        );
+        assertTrue(
+                palette.contains(
+                        "bool voxel_data_is_light_transmissive(VoxelData voxel_data)"
+                ),
+                "transparent light transport needs one shared material " +
+                        "classification helper"
+        );
+        assertTrue(
+                palette.contains(
+                        "float voxel_data_visibility_transmittance(" +
+                                "VoxelData voxel_data, vec4 albedo)"
                 ),
                 "transparent light transport needs one shared material " +
                         "transmittance helper"
         );
         assertTrue(
-                palette.contains("#if defined PH_FULL_TRANSPARENCY"),
-                "only full per-voxel transparency mode should treat albedo " +
-                        "alpha as light opacity"
+                palette.contains(
+                        "if (voxel_data_is_light_transmissive(voxel_data)) " +
+                                "return 1.0f;"
+                ),
+                "physically light-transmissive block materials must not be " +
+                        "blocked by opaque decorative texture texels"
+        );
+        assertTrue(
+                palette.contains(
+                        "return clamp(1.0f - albedo.a, 0.0f, 1.0f);"
+                ),
+                "non-material alpha still represents texture coverage for " +
+                        "cutouts instead of becoming unconditional light " +
+                        "transmission"
+        );
+        assertTrue(
+                types.contains("#if defined PH_USE_TRANSPARENCY") &&
+                        types.contains("#else") &&
+                        types.contains("return false;"),
+                "AlphaMode.NONE must make transparent leaves opaque in " +
+                        "traversal"
+        );
+        assertTrue(
+                iterator.contains("void ray_iter_skip_transparent") &&
+                        iterator.contains("#if defined PH_FULL_TRANSPARENCY") &&
+                        iterator.contains("ray_iter_skip_voxel(ray);") &&
+                        iterator.contains("ray_iter_skip_block(ray);"),
+                "AlphaMode.BLOCK vs VOXEL must control transparent traversal " +
+                        "granularity"
         );
         assertTrue(
                 tracing.contains(transmittanceUpdate),
@@ -100,10 +174,16 @@ class EmissiveBlockShaderRegressionTest {
         assertFalse(
                 tracing.contains("light_transmittance *= 1.0f - albedo.a") ||
                         handheld.contains(
-                                "light_transmittance *= 1.0f - albedo.a"
+                        "light_transmittance *= 1.0f - albedo.a"
                         ),
                 "texture alpha is coverage/opacity metadata, not a blanket " +
                         "light-transmission scalar for block transparency"
+        );
+        assertTrue(
+                tracing.contains("ray_iter_skip_transparent(ray);") &&
+                        handheld.contains("ray_iter_skip_transparent(ray);"),
+                "direct and handheld visibility must share the AlphaMode " +
+                        "transparent skip policy"
         );
     }
 
@@ -114,7 +194,7 @@ class EmissiveBlockShaderRegressionTest {
         );
 
         int emissionSample = diffusePass.indexOf(
-                "Light primary_light = ray_result_light_data(primary_hit);"
+                "lighting.rgb += sample_visible_primary_emission()"
         );
         int indirectAssignment = diffusePass.indexOf(
                 "lighting.rgb = indirect_reservoir_get_final_color("
@@ -128,6 +208,53 @@ class EmissiveBlockShaderRegressionTest {
     }
 
     @Test
+    void tintedGlassContinuesTheCameraRayToVisibleEmission()
+            throws IOException {
+        String diffusePass = readShader(
+                "rendering/restir/passes/r8_diffuse.fsh"
+        );
+
+        int cameraRay = diffusePass.indexOf(
+                "vec3 camera_ray_direction = normalize("
+        );
+        int finiteBudget = diffusePass.indexOf(
+                "primary_ray.iterations = min("
+        );
+        int finiteDistance = diffusePass.indexOf(
+                "continuation_distance > primary_emission_max_distance"
+        );
+        int materialCheck = diffusePass.indexOf(
+                "if (!voxel_data_is_light_transmissive(voxel_data)) break;"
+        );
+        int tintAccumulation = diffusePass.indexOf(
+                "ray_iter_accumulate_transparency_tint("
+        );
+        int skip = diffusePass.indexOf(
+                "ray_iter_skip_transparent(primary_ray);"
+        );
+
+        assertTrue(
+                cameraRay >= 0 && finiteBudget > cameraRay &&
+                        finiteDistance > finiteBudget,
+                "visible emission must follow the finite camera ray through " +
+                        "the raster primary surface"
+        );
+        assertTrue(
+                materialCheck > finiteBudget &&
+                        tintAccumulation > materialCheck && skip > tintAccumulation,
+                "only material-transmissive primary blocks may continue, and " +
+                        "their coverage tint must be accumulated before skipping"
+        );
+        assertTrue(
+                diffusePass.contains(
+                        "primary_light.color * primary_throughput"
+                ),
+                "the first visible emissive hit behind tinted glass must be " +
+                        "filtered by the accumulated primary throughput"
+        );
+    }
+
+    @Test
     void transparentLightHostContributesEmissionBeforeTransmission() throws IOException {
         String indirectLighting = readShader("rendering/indirect_lighting.glsl");
 
@@ -135,7 +262,7 @@ class EmissiveBlockShaderRegressionTest {
                 "Light hit_light = ray_result_light_data(hit);"
         );
         int transparencyDecision = indirectLighting.indexOf(
-                "if (should_apply_transparency(hit, albedo, rnd_state))"
+                "if (should_apply_transparency("
         );
 
         assertTrue(
@@ -143,6 +270,168 @@ class EmissiveBlockShaderRegressionTest {
                 "an emissive hit must contribute radiance before a transparent " +
                         "surface continues the ray"
         );
+    }
+
+    @Test
+    void materialTransmissionBypassesTextureAlphaAndAccumulatesTint()
+            throws IOException {
+        String indirectLighting = readShader("rendering/indirect_lighting.glsl");
+        String iterator = readShader("internal/tracing/iterator.glsl");
+        String palette = readShader("palette.glsl");
+        String tracing = readShader("internal/tracing/simple.glsl");
+
+        assertTrue(
+                indirectLighting.contains(
+                        "voxel_data_is_light_transmissive(voxel_data) ||"
+                ),
+                "opaque-alpha glass must continue indirect rays based on its " +
+                        "material classification"
+        );
+        assertTrue(
+                iterator.contains(
+                        "accumulator.rgb *= voxel_data_visibility_tint("
+                ),
+                "successive transmissive layers must multiply RGB throughput"
+        );
+        assertTrue(
+                palette.contains(
+                        "return mix(vec3(1.0f), clamped_albedo.rgb, " +
+                                "clamped_albedo.a);"
+                ),
+                "material tint must use alpha as surface coverage: fully " +
+                        "clear texels transmit white instead of multiplying " +
+                        "their otherwise invisible RGB channels"
+        );
+        assertTrue(
+                tracing.contains("ray_iter_accumulate_transparency_tint(") &&
+                        tracing.contains("voxel_data,") &&
+                        tracing.contains("albedo\n            );"),
+                "visibility tint accumulation must receive material metadata"
+        );
+    }
+
+    @Test
+    void transmissivePrimarySurfacesUseTwoSidedDirectLighting()
+            throws IOException {
+        String fragData = readShader("rendering/frag/frag_data.glsl");
+        String fragFlags = readShader("rendering/frag/flags.glsl");
+        String fragLoad = readShader("rendering/frag/f0_load_frag.fsh");
+        String directSample = readShader(
+                "rendering/restir/direct/sample.glsl"
+        );
+        String initialDirect = readShader(
+                "rendering/restir/passes/r2_initial_direct.fsh"
+        );
+        String reconnection = readShader(
+                "rendering/restir/reservoir_splatting/reconnection.glsl"
+        );
+        String shift = readShader(
+                "rendering/restir/reservoir_splatting/shift.glsl"
+        );
+        String spatial = readShader(
+                "rendering/restir/reservoir_splatting/spatial_reuse.glsl"
+        );
+
+        assertTrue(
+                fragFlags.contains("frag_is_light_transmissive_bit") &&
+                        fragData.contains(
+                                "frag_data_is_light_transmissive(FragData frag)"
+                        ),
+                "the primary material classification must survive in FragData"
+        );
+        assertTrue(
+                fragLoad.contains("classify_primary_surface_transmission(") &&
+                        fragLoad.contains("frag_is_light_transmissive_bit"),
+                "the raster primary surface must be classified from the " +
+                        "compiled voxel material"
+        );
+        assertTrue(
+                directSample.contains(
+                        "if (light_transmissive_surface &&"
+                ) && directSample.contains("geo_normal = -geo_normal;") &&
+                        directSample.contains("tex_normal = -tex_normal;"),
+                "only a transmissive back face may orient both shading " +
+                        "normals toward the retained light vertex"
+        );
+        assertTrue(
+                initialDirect.contains("frag_is_light_transmissive"),
+                "initial direct candidates must use the primary material flag"
+        );
+        assertTrue(
+                reconnection.contains(
+                        "direct_reconnection_is_light_transmissive("
+                ) && shift.contains(
+                        "direct_reconnection_is_light_transmissive(reconnection)"
+                ),
+                "temporal and spatial shifts must evaluate the retained path " +
+                        "with its destination primary material"
+        );
+        assertTrue(
+                spatial.contains(
+                        "VoxelData primary_voxel_data = " +
+                                "ray_result_voxel_data(primary_hit);"
+                ) && spatial.contains(
+                        "voxel_data_is_light_transmissive(primary_voxel_data)"
+                ),
+                "an arbitrary spatial primary hit must carry its own material " +
+                        "classification instead of borrowing the center pixel"
+        );
+    }
+
+    @Test
+    void voxelTransmissionAppliesMaterialTintOncePerBlock()
+            throws IOException {
+        String iterator = readShader("internal/tracing/iterator.glsl");
+
+        int blockPosition = iterator.indexOf(
+                "ivec3 block_position = ivec3(floor(\n" +
+                        "            ray.position + sign(ray.direction) * " +
+                        "ph_hit_block_epsilon\n" +
+                        "        ));"
+        );
+        int duplicateCheck = iterator.indexOf(
+                "if (all(equal(block_position, " +
+                        "ray.last_transmissive_block))) return;"
+        );
+        int tintMultiply = iterator.indexOf(
+                "accumulator.rgb *= voxel_data_visibility_tint("
+        );
+
+        assertTrue(
+                iterator.contains("ivec3 last_transmissive_block;") &&
+                        blockPosition >= 0 && duplicateCheck > blockPosition &&
+                        tintMultiply > duplicateCheck,
+                "voxel traversal may cross several surface voxels in one " +
+                        "glass block, but its material transmission must be " +
+                        "applied once for that block"
+        );
+    }
+
+    @Test
+    void hitBlockClassificationBiasesIntegerFacesAlongRayDirection()
+            throws IOException {
+        String iterator = readShader("internal/tracing/iterator.glsl");
+
+        assertTrue(
+                iterator.contains(
+                        "const float ph_hit_block_epsilon = " +
+                                "ph_16_rcp * 0.01f;"
+                ),
+                "the hit bias must be expressed in block-space from the " +
+                        "voxel scale"
+        );
+
+        assertEquals(1, directionBiasedBlock(1.0f, 1.0f));
+        assertEquals(1, directionBiasedBlock(2.0f, -1.0f));
+        assertEquals(0, directionBiasedBlock(1.0f, -1.0f));
+        assertEquals(2, directionBiasedBlock(2.0f, 1.0f));
+        assertEquals(-2, directionBiasedBlock(-2.0f, 1.0f));
+        assertEquals(-2, directionBiasedBlock(-1.0f, -1.0f));
+    }
+
+    private static int directionBiasedBlock(float position, float direction) {
+        float epsilon = (1.0f / 16.0f) * 0.01f;
+        return (int) Math.floor(position + Math.signum(direction) * epsilon);
     }
 
     private static String readShader(String relativePath) throws IOException {

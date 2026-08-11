@@ -30,6 +30,16 @@ loom {
     }
 }
 
+val prepareShaderGameTestFixture by tasks.registering(Copy::class) {
+    description = "Installs the tracked shader pack used by the shader game test."
+    from(layout.projectDirectory.dir("src/shaderGameTest"))
+    into(layout.projectDirectory.dir("run"))
+}
+
+tasks.named("runShaderGameTestClient") {
+    dependsOn(prepareShaderGameTestFixture)
+}
+
 tasks {
     processResources {
         inputs.property("version", project.version)

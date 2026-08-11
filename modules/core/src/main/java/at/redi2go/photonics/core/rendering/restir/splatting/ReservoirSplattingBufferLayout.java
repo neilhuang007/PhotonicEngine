@@ -30,7 +30,15 @@ public record ReservoirSplattingBufferLayout(
     public static final int APPEND_TARGET_CELL_WORD_LANE = 0;
     public static final int APPEND_LOCAL_CELL_INDEX_WORD_LANE = 1;
     public static final int SOURCE_ID_WORD_STRIDE = 1;
-    public static final int RECONNECTION_WORD_STRIDE = 8;
+    /**
+     * Packed retained-path record: 16 uint words, or 64 bytes per pixel.
+     * A device exposing the common 128 MiB SSBO block limit can hold at most
+     * 2,097,152 records (exactly a 2048 x 1024 viewport) in each reconnection
+     * buffer. Full HD needs 132,710,400 bytes and therefore still fits.
+     */
+    public static final int RECONNECTION_WORD_STRIDE = 16;
+    public static final int RECONNECTION_RECORD_BYTE_SIZE =
+            RECONNECTION_WORD_STRIDE * WORD_BYTE_SIZE;
 
     public static ReservoirSplattingBufferLayout plan(
             int width,

@@ -2,6 +2,7 @@
 //ph_required: uniform int frameCounter;
 //ph_required: uniform float viewWidth;
 //ph_required: uniform float viewHeight;
+//ph_required: uniform sampler2D depthtex0;
 
 //ph_required: uniform vec3 previousCameraPosition;
 
