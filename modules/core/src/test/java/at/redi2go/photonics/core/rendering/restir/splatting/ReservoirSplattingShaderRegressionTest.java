@@ -41,6 +41,8 @@ class ReservoirSplattingShaderRegressionTest {
             "rendering/restir/passes/r11_denoising.fsh";
     private static final String TEMPORAL_REUSE_SHADER =
             "rendering/restir/reservoir_splatting/temporal_reuse.glsl";
+    private static final String SHIFT_SHADER =
+            "rendering/restir/reservoir_splatting/shift.glsl";
     private static final String REPROJECT_PASS_SHADER =
             "rendering/restir/reservoir_splatting/passes/p1_reproject.csh";
     private static final String FRAG_COMMON_SHADER =
@@ -72,6 +74,27 @@ class ReservoirSplattingShaderRegressionTest {
         ).expand(REPROJECT_SHADER);
 
         assertFalse(source.contains("shader_pack_only_dependency"));
+    }
+
+    @Test
+    void reprojectComputeHelpersUseDirectSplatNamespace()
+            throws IOException {
+        String source = Files.readString(findShaderRoot().resolve(
+                REPROJECT_SHADER
+        ));
+
+        assertTrue(source.contains(
+                "bool direct_splat_project_reconnection_to_current_frame("
+        ));
+        assertTrue(source.contains(
+                "bool direct_splat_current_camera_sees_primary_hit("
+        ));
+        assertFalse(source.contains(
+                "bool project_reconnection_to_current_frame("
+        ));
+        assertFalse(source.contains(
+                "bool current_camera_sees_primary_hit("
+        ));
     }
 
     @Test
@@ -426,6 +449,139 @@ class ReservoirSplattingShaderRegressionTest {
     }
 
     @Test
+    void temporalProposalsUseOneSymmetricRetainedPathShift()
+            throws IOException {
+        Path shaderRoot = findShaderRoot();
+        String shift = Files.readString(shaderRoot.resolve(SHIFT_SHADER));
+        String temporal = Files.readString(shaderRoot.resolve(
+                TEMPORAL_REUSE_SHADER
+        ));
+        String compactShift = shift.replaceAll("\\s+", "");
+        String compactTemporal = temporal.replaceAll("\\s+", "");
+
+        int helper = shift.indexOf(
+                "bool direct_splat_shift_and_evaluate_retained_path("
+        );
+        int project = shift.indexOf(
+                "direct_splat_shift_primary(",
+                helper
+        );
+        int retainSourceDensity = shift.indexOf(
+                "source_reconnection.secondary_path_jacobian",
+                helper
+        );
+        int refreshLightVertex = shift.indexOf(
+                "shifted_reconnection.light_rt_pos = " +
+                        "direct_sample_get_position(",
+                helper
+        );
+        int evaluate = shift.indexOf(
+                "direct_splat_evaluate_retained_path(",
+                helper
+        );
+        int combineJacobians = shift.indexOf(
+                "direct_splat_apply_secondary_jacobian(",
+                helper
+        );
+        int updateSubpixel = shift.indexOf(
+                "shifted_reconnection.subpixel = " +
+                        "fract(shifted_fractional_pixel);",
+                helper
+        );
+        int mapPreviousSample = temporal.indexOf(
+                "direct_sample_reproject(shifted_sample)"
+        );
+        int forwardShift = temporal.indexOf(
+                "direct_splat_shift_and_evaluate_retained_path(",
+                temporal.indexOf(
+                        "direct_splat_shift_and_evaluate_retained_path("
+                ) + 1
+        );
+
+        assertTrue(helper >= 0, "the symmetric temporal shift helper is missing");
+        assertTrue(
+                helper < retainSourceDensity &&
+                        retainSourceDensity < project &&
+                        project < refreshLightVertex &&
+                        refreshLightVertex < evaluate &&
+                        evaluate < combineJacobians &&
+                        combineJacobians < updateSubpixel,
+                "the helper must retain the source suffix density, validate " +
+                        "the primary shift, refresh/evaluate the target path, " +
+                        "combine Jacobians, and then persist the target subpixel"
+        );
+        assertEquals(
+                2,
+                countOccurrences(
+                        temporal,
+                        "direct_splat_shift_and_evaluate_retained_path("
+                ),
+                "canonical reverse and previous forward proposals must share " +
+                "the same target-domain shift"
+        );
+        assertEquals(
+                1,
+                countOccurrences(
+                        shift,
+                        "bool direct_splat_shift_and_evaluate_retained_path("
+                ),
+                "target-domain temporal shifting must have one implementation"
+        );
+        assertTrue(
+                mapPreviousSample >= 0 && mapPreviousSample < forwardShift,
+                "the previous sample must map to its current light identity " +
+                        "before the helper refreshes the target light vertex"
+        );
+        assertFalse(
+                temporal.contains("direct_splat_shift_primary("),
+                "temporal call sites must not bypass target-path evaluation"
+        );
+        assertTrue(
+                compactShift.contains(
+                        "jacobian=target_jacobian/source_jacobian;"
+                ),
+                "Eq. 16 requires the target/source primary density ratio"
+        );
+        assertTrue(
+                compactShift.contains(
+                        "jacobian*=target_secondary_jacobian/" +
+                                "source_secondary_jacobian;"
+                ),
+                "the full shift multiplies the target/source suffix ratio"
+        );
+        assertTrue(
+                temporal.contains(
+                        "reverse_target * reverse_jacobian *"
+                ),
+                "canonical MIS must use the reverse-evaluated target"
+        );
+        assertFalse(
+                temporal.contains("current_target * reverse_jacobian *"),
+                "the current-domain target is not Eq. 13's reverse target"
+        );
+        assertTrue(
+                compactTemporal.contains(
+                        "floatshifted_measure=shifted_target*" +
+                                "shifted_jacobian;"
+                ),
+                "Eq. 11's current-domain competitor uses shifted p-hat times J"
+        );
+        assertTrue(
+                compactTemporal.contains(
+                        "previous_mis=direct_splat_balance_heuristic(m2,m1);"
+                ),
+                "the previous proposal owns the source-domain numerator"
+        );
+        assertTrue(
+                compactTemporal.contains(
+                        "previous_reservoir,shifted_sample,shifted_target," +
+                                "previous_mis,shifted_jacobian,"
+                ),
+                "Eq. 10 must stream the shifted target with the full Jacobian"
+        );
+    }
+
+    @Test
     void softShadowSamplePositionIsIndependentOfTheShadingPoint()
             throws IOException {
         String source = Files.readString(findShaderRoot().resolve(
@@ -464,15 +620,20 @@ class ReservoirSplattingShaderRegressionTest {
                         "                < " +
                         "MIN_STABLE_POSITIVE_TARGET_CONFIDENCE"
         ));
-        assertTrue(source.contains("lastRejectedReason"));
-        assertTrue(source.contains("if (!phaseReady || !sampleReady)"));
-        assertTrue(
-                source.contains("positiveTargets > 0 &&\n" +
-                        "                meanConfidence < " +
-                        "MIN_STABLE_POSITIVE_TARGET_CONFIDENCE"),
-                "direct reservoir confidence is a conditional metric: enforce " +
-                        "it only after the fixture actually observes targets"
-        );
+        assertTrue(source.contains("lastDiscardedReason"));
+        assertTrue(source.contains(
+                "REQUIRED_CONSECUTIVE_STABLE_SAMPLES = 3"
+        ));
+        assertTrue(source.contains(
+                "activeReadiness.shouldCapture(lighting, reservoir)"
+        ));
+        assertTrue(source.contains(
+                "lightingStabilityFailure(\n" +
+                        "                    chromaticityDistance,"
+        ));
+        assertTrue(source.contains("&& hasPositiveReservoirTargets"));
+        assertTrue(source.contains("if (positiveTargets == 0)"));
+        assertFalse(source.contains("!hasPositiveReservoirTargets ||"));
     }
 
     @Test
@@ -512,6 +673,16 @@ class ReservoirSplattingShaderRegressionTest {
             current = current.getParent();
         }
         throw new IllegalStateException("Could not find repository root");
+    }
+
+    private static int countOccurrences(String source, String value) {
+        int count = 0;
+        int offset = 0;
+        while ((offset = source.indexOf(value, offset)) >= 0) {
+            count++;
+            offset += value.length();
+        }
+        return count;
     }
 
     private static final class IncludeExpander {

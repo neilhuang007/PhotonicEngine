@@ -55,7 +55,8 @@ public class WorldCompiler implements Runnable, RenderingComponent {
     private final ReentrantLock uploadLock = new ReentrantLock();
     private final Condition uploadDone = uploadLock.newCondition();
     private boolean canUpload = true;
-    private boolean contentChanged;
+    private long pendingUploadGeneration;
+    private long completedUploadGeneration;
     private volatile long contentGeneration;
 
     private Vector3i iorigin = null;
@@ -257,9 +258,10 @@ public class WorldCompiler implements Runnable, RenderingComponent {
 
         try {
             canUpload = true;
-            contentChanged = true;
+            long uploadGeneration = ++pendingUploadGeneration;
             uniformUpdater.updateNextFrame();
-            uploadDone.await();
+            while (completedUploadGeneration < uploadGeneration)
+                uploadDone.await();
         } finally {
             uploadLock.unlock();
         }
@@ -286,8 +288,8 @@ public class WorldCompiler implements Runnable, RenderingComponent {
 
             mostRecentBlockContainerScale = 21 - (treeManager.depth() - (VoxelTreeEntry.BLOCK_CONTAINER_DEPTH) << 1);
 
-            if (contentChanged) {
-                contentChanged = false;
+            if (completedUploadGeneration < pendingUploadGeneration) {
+                completedUploadGeneration = pendingUploadGeneration;
                 contentGeneration++;
             }
 

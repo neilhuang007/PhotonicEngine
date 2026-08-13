@@ -9,6 +9,7 @@ import at.redi2go.photonics.common.iris.pipeline.framebuffer.FlippableFramebuffe
 import at.redi2go.photonics.common.iris.pipeline.renderer.DeferredIrisRenderer;
 import at.redi2go.photonics.core.Photonics;
 import at.redi2go.photonics.core.iris.extensions.RestirPipeline;
+import at.redi2go.photonics.core.rendering.restir.splatting.ReservoirSplattingRendering;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.mojang.blaze3d.platform.NativeImage;
@@ -60,10 +61,18 @@ final class ShaderGameTestReporter {
     private static final int TEST_RENDER_DISTANCE = 2;
     private static final int TEST_SIMULATION_DISTANCE = 5;
     private static final int EXPECTED_SPATIAL_REUSE_SAMPLES = 4;
+    private static final int EXPECTED_RESTIR_DENOISER_PASSES = 0;
+    private static final int MAX_INACTIVE_PIPELINE_RELOAD_TICKS = 40;
+    private static final int REQUIRED_CONSECUTIVE_STABLE_SAMPLES = 3;
     private static final Duration REPORT_TIMEOUT = Duration.ofMinutes(3);
     private static final double CAMERA_TRANSLATION_BLOCKS = 0.35;
     private static final double MIN_MEAN_LUMINANCE = 0.01;
     private static final double MIN_NONZERO_PIXEL_FRACTION = 0.20;
+    private static final double MAX_MEAN_LUMINANCE = 0.80;
+    private static final double MAX_P95_LUMINANCE = 0.985;
+    private static final double MAX_SATURATED_PIXEL_FRACTION = 0.12;
+    private static final double MIN_MIDTONE_PIXEL_FRACTION = 0.005;
+    private static final double SATURATED_LUMINANCE = 0.98;
     private static final double MAX_CAMERA_CHROMATICITY_DISTANCE = 0.035;
     private static final double MAX_FRAME_CHROMATICITY_DISTANCE = 0.04;
     private static final double MIN_LIGHTING_MEAN_LUMINANCE = 1.0e-5;
@@ -73,6 +82,9 @@ final class ShaderGameTestReporter {
     private static final double MAX_LIGHTING_FRAME_CHROMATICITY_DISTANCE = 0.04;
     private static final double MAX_RELATIVE_FRAME_LUMINANCE_STDDEV = 0.50;
     private static final double MAX_RELATIVE_HALF_LUMINANCE_DRIFT = 0.50;
+    private static final double MAX_READINESS_RELATIVE_LUMINANCE_CHANGE =
+            0.25;
+    private static final double MAX_READINESS_NONZERO_FRACTION_CHANGE = 0.10;
     // Falcor's PathReservoir caps confidence at 20. Requiring near-cap
     // confidence distinguishes temporal ScatterOnly reuse from the initial
     // 1-current + 4-spatial-neighbor baseline produced without valid history.
@@ -104,18 +116,17 @@ final class ShaderGameTestReporter {
     private String shaderPack = "";
     private Map<String, String> shaderPackSettings = Map.of();
     private Map<String, Object> shaderPackProperties = Map.of();
+    private Map<String, Object> reservoirSplattingHistory = Map.of();
     private int activePipelineTicks;
+    private int inactivePipelineReloadTicks;
+    private int denoiserPasses = -1;
     private int settleTicks;
     private int captureSpacingTicks;
-    private int cameraADiscardedWarmupFrames;
-    private int cameraBDiscardedWarmupFrames;
-    private boolean cameraAReady;
-    private boolean cameraBReady;
+    private final CaptureReadiness cameraAReadiness =
+            new CaptureReadiness();
+    private final CaptureReadiness cameraBReadiness =
+            new CaptureReadiness();
     private boolean serverDistanceApplied;
-    private LightingFrameMetrics cameraALastWarmupLighting;
-    private LightingFrameMetrics cameraBLastWarmupLighting;
-    private ReservoirFrameMetrics cameraALastWarmupReservoir;
-    private ReservoirFrameMetrics cameraBLastWarmupReservoir;
     private boolean movedCamera;
     private boolean captureInFlight;
     private boolean focusPauseDisabled;
@@ -197,6 +208,14 @@ final class ShaderGameTestReporter {
                         extensionClass
                 );
             }
+            if (extension instanceof RestirPipeline restirPipeline) {
+                denoiserPasses = restirPipeline.denoiserPasses();
+                reservoirSplattingHistory =
+                        reservoirSplattingHistoryMetrics(
+                                restirPipeline
+                                        .reservoirSplattingHistorySnapshot()
+                        );
+            }
 
             IShaderPack activePack = (IShaderPack) Iris.getCurrentPack()
                     .orElse(null);
@@ -237,14 +256,23 @@ final class ShaderGameTestReporter {
                     && extension instanceof RestirPipeline;
             if (!pipelineActive) {
                 if (activePipelineTicks > 0) {
-                    errors.add("The active ReSTIR pipeline was replaced during "
-                            + "the shader game test.");
-                    finish(client, false);
+                    inactivePipelineReloadTicks++;
+                    if (inactivePipelineReloadTicks
+                            > MAX_INACTIVE_PIPELINE_RELOAD_TICKS) {
+                        errors.add(
+                                "The active ReSTIR pipeline stayed unavailable "
+                                        + "for "
+                                        + inactivePipelineReloadTicks
+                                        + " ticks during the shader game test."
+                        );
+                        finish(client, false);
+                    }
                 }
                 return;
             }
 
             activePipelineTicks++;
+            inactivePipelineReloadTicks = 0;
 
             if (cameraA == null) {
                 cameraA = CameraState.from(player);
@@ -285,25 +313,10 @@ final class ShaderGameTestReporter {
                 LightingFrameMetrics lighting = captureLightingAttachment();
                 ReservoirFrameMetrics reservoir =
                         captureReservoirAttachment();
-                boolean phaseReady = movedCamera
-                        ? cameraBReady
-                        : cameraAReady;
-                boolean sampleReady = isRestirCaptureReady(
-                        lighting,
-                        reservoir
-                );
-                if (!phaseReady || !sampleReady) {
-                    if (movedCamera) {
-                        cameraBDiscardedWarmupFrames++;
-                        cameraBLastWarmupLighting = lighting;
-                        cameraBLastWarmupReservoir = reservoir;
-                        cameraBReady = sampleReady;
-                    } else {
-                        cameraADiscardedWarmupFrames++;
-                        cameraALastWarmupLighting = lighting;
-                        cameraALastWarmupReservoir = reservoir;
-                        cameraAReady = sampleReady;
-                    }
+                CaptureReadiness activeReadiness = movedCamera
+                        ? cameraBReadiness
+                        : cameraAReadiness;
+                if (!activeReadiness.shouldCapture(lighting, reservoir)) {
                     return;
                 }
 
@@ -366,6 +379,27 @@ final class ShaderGameTestReporter {
             return false;
         }
 
+        AggregateMetrics framebufferA = AggregateMetrics.from(cameraAFrames);
+        AggregateMetrics framebufferB = AggregateMetrics.from(cameraBFrames);
+        double framebufferMeanLuminance =
+                (framebufferA.meanLuminance + framebufferB.meanLuminance)
+                        * 0.5;
+        double framebufferNonzeroFraction =
+                (framebufferA.meanNonzeroPixelFraction
+                        + framebufferB.meanNonzeroPixelFraction) * 0.5;
+        double maxFramebufferP95Luminance = Math.max(
+                framebufferA.meanP95Luminance,
+                framebufferB.meanP95Luminance
+        );
+        double maxSaturatedPixelFraction = Math.max(
+                framebufferA.meanSaturatedPixelFraction,
+                framebufferB.meanSaturatedPixelFraction
+        );
+        double minMidtonePixelFraction = Math.min(
+                framebufferA.meanMidtonePixelFraction,
+                framebufferB.meanMidtonePixelFraction
+        );
+
         LightingAggregateMetrics a =
                 LightingAggregateMetrics.from(cameraALightingFrames);
         LightingAggregateMetrics b =
@@ -396,12 +430,15 @@ final class ShaderGameTestReporter {
                 reservoirB.positiveTargetReservoirCount
         );
         boolean hasPositiveReservoirTargets = positiveTargetReservoirs > 0;
-        boolean reservoirConfidenceIsStable =
-                !hasPositiveReservoirTargets ||
-                        meanPositiveTargetConfidence
-                        >= MIN_STABLE_POSITIVE_TARGET_CONFIDENCE;
 
-        return meanLuminance >= MIN_LIGHTING_MEAN_LUMINANCE
+        return framebufferMeanLuminance >= MIN_MEAN_LUMINANCE
+                && framebufferMeanLuminance <= MAX_MEAN_LUMINANCE
+                && framebufferNonzeroFraction >= MIN_NONZERO_PIXEL_FRACTION
+                && maxFramebufferP95Luminance <= MAX_P95_LUMINANCE
+                && maxSaturatedPixelFraction
+                <= MAX_SATURATED_PIXEL_FRACTION
+                && minMidtonePixelFraction >= MIN_MIDTONE_PIXEL_FRACTION
+                && meanLuminance >= MIN_LIGHTING_MEAN_LUMINANCE
                 && nonzeroFraction >= MIN_LIGHTING_NONZERO_PIXEL_FRACTION
                 && finiteFraction >= MIN_LIGHTING_FINITE_PIXEL_FRACTION
                 && cameraChromaticityDistance
@@ -420,18 +457,13 @@ final class ShaderGameTestReporter {
                 >= MIN_RESERVOIR_FINITE_PIXEL_FRACTION
                 && reservoirB.meanFinitePixelFraction
                 >= MIN_RESERVOIR_FINITE_PIXEL_FRACTION
-                && reservoirConfidenceIsStable
+                && hasPositiveReservoirTargets
+                && meanPositiveTargetConfidence
+                >= MIN_STABLE_POSITIVE_TARGET_CONFIDENCE
                 && reservoirA.maxConfidence <= MAX_RESERVOIR_CONFIDENCE
                 && reservoirB.maxConfidence <= MAX_RESERVOIR_CONFIDENCE
                 && reservoirA.confidenceCapViolationCount == 0
                 && reservoirB.confidenceCapViolationCount == 0;
-    }
-
-    private static boolean isRestirCaptureReady(
-            LightingFrameMetrics lighting,
-            ReservoirFrameMetrics reservoir
-    ) {
-        return restirReadinessFailure(lighting, reservoir).isEmpty();
     }
 
     private static String restirReadinessFailure(
@@ -445,6 +477,9 @@ final class ShaderGameTestReporter {
         if (lighting.nonzeroPixelFraction
                 < MIN_LIGHTING_NONZERO_PIXEL_FRACTION) {
             return "zero ReSTIR lighting";
+        }
+        if (lighting.meanLuminance < MIN_LIGHTING_MEAN_LUMINANCE) {
+            return "ReSTIR lighting is below the luminance floor";
         }
         if (reservoir.finitePixelFraction
                 < MIN_RESERVOIR_FINITE_PIXEL_FRACTION) {
@@ -460,6 +495,26 @@ final class ShaderGameTestReporter {
         }
         if (reservoir.maxConfidence > MAX_RESERVOIR_CONFIDENCE) {
             return "direct-reservoir confidence exceeds the Falcor cap";
+        }
+        return "";
+    }
+
+    private static String lightingStabilityFailure(
+            double chromaticityDistance,
+            double relativeLuminanceChange,
+            double nonzeroFractionChange
+    ) {
+        if (chromaticityDistance
+                > MAX_LIGHTING_FRAME_CHROMATICITY_DISTANCE) {
+            return "ReSTIR lighting chromaticity is still changing";
+        }
+        if (relativeLuminanceChange
+                > MAX_READINESS_RELATIVE_LUMINANCE_CHANGE) {
+            return "ReSTIR lighting luminance is still changing";
+        }
+        if (nonzeroFractionChange
+                > MAX_READINESS_NONZERO_FRACTION_CHANGE) {
+            return "ReSTIR lighting coverage is still changing";
         }
         return "";
     }
@@ -553,6 +608,43 @@ final class ShaderGameTestReporter {
             return "Did not capture all required direct reservoir frames.";
         }
 
+        AggregateMetrics framebufferA = AggregateMetrics.from(cameraAFrames);
+        AggregateMetrics framebufferB = AggregateMetrics.from(cameraBFrames);
+        double framebufferMeanLuminance =
+                (framebufferA.meanLuminance + framebufferB.meanLuminance)
+                        * 0.5;
+        double framebufferNonzeroFraction =
+                (framebufferA.meanNonzeroPixelFraction
+                        + framebufferB.meanNonzeroPixelFraction) * 0.5;
+        double maxFramebufferP95Luminance = Math.max(
+                framebufferA.meanP95Luminance,
+                framebufferB.meanP95Luminance
+        );
+        double maxSaturatedPixelFraction = Math.max(
+                framebufferA.meanSaturatedPixelFraction,
+                framebufferB.meanSaturatedPixelFraction
+        );
+        double minMidtonePixelFraction = Math.min(
+                framebufferA.meanMidtonePixelFraction,
+                framebufferB.meanMidtonePixelFraction
+        );
+
+        if (framebufferMeanLuminance < MIN_MEAN_LUMINANCE
+                || framebufferNonzeroFraction < MIN_NONZERO_PIXEL_FRACTION) {
+            return "The rendered framebuffer is effectively black.";
+        }
+        if (framebufferMeanLuminance > MAX_MEAN_LUMINANCE
+                || maxFramebufferP95Luminance > MAX_P95_LUMINANCE) {
+            return "The rendered framebuffer is overexposed.";
+        }
+        if (maxSaturatedPixelFraction > MAX_SATURATED_PIXEL_FRACTION) {
+            return "The rendered framebuffer contains too many saturated "
+                    + "pixels.";
+        }
+        if (minMidtonePixelFraction < MIN_MIDTONE_PIXEL_FRACTION) {
+            return "The rendered framebuffer lacks stable midtone detail.";
+        }
+
         LightingAggregateMetrics a =
                 LightingAggregateMetrics.from(cameraALightingFrames);
         LightingAggregateMetrics b =
@@ -617,8 +709,10 @@ final class ShaderGameTestReporter {
                 reservoirB.meanPositiveTargetConfidence,
                 reservoirB.positiveTargetReservoirCount
         );
-        if (positiveTargets > 0 &&
-                meanConfidence < MIN_STABLE_POSITIVE_TARGET_CONFIDENCE) {
+        if (positiveTargets == 0) {
+            return "Direct reservoirs contain no positive-target samples.";
+        }
+        if (meanConfidence < MIN_STABLE_POSITIVE_TARGET_CONFIDENCE) {
             return "Direct reservoir confidence did not accumulate beyond "
                     + "the current-frame spatial baseline.";
         }
@@ -641,35 +735,36 @@ final class ShaderGameTestReporter {
         metrics.put("shaderPackSettings", shaderPackSettings);
         metrics.put("shaderPackProperties", shaderPackProperties);
         metrics.put("activePipelineTicks", activePipelineTicks);
+        metrics.put("inactivePipelineReloadTicks",
+                inactivePipelineReloadTicks);
         metrics.put("framesPerCamera", REQUIRED_FRAMES_PER_CAMERA);
         metrics.put("cameraTranslationBlocks", CAMERA_TRANSLATION_BLOCKS);
         metrics.put("testRenderDistance", TEST_RENDER_DISTANCE);
         metrics.put("testSimulationDistance", TEST_SIMULATION_DISTANCE);
         metrics.put("serverDistanceApplied", serverDistanceApplied);
+        metrics.put("reservoirSplattingHistory",
+                reservoirSplattingHistory);
         metrics.put("currentFrameSpatialConfidenceBaseline",
                 EXPECTED_SPATIAL_REUSE_SAMPLES + 1);
         metrics.put("discardedWarmupFrames", Map.of(
-                "cameraA", cameraADiscardedWarmupFrames,
-                "cameraB", cameraBDiscardedWarmupFrames
+                "cameraA", cameraAReadiness.discardedFrames,
+                "cameraB", cameraBReadiness.discardedFrames
         ));
         metrics.put("warmupReadiness", Map.of(
-                "cameraA", warmupReadinessMetrics(
-                        cameraADiscardedWarmupFrames,
-                        cameraAReady,
-                        cameraALastWarmupLighting,
-                        cameraALastWarmupReservoir
-                ),
-                "cameraB", warmupReadinessMetrics(
-                        cameraBDiscardedWarmupFrames,
-                        cameraBReady,
-                        cameraBLastWarmupLighting,
-                        cameraBLastWarmupReservoir
-                )
+                "cameraA", warmupReadinessMetrics(cameraAReadiness),
+                "cameraB", warmupReadinessMetrics(cameraBReadiness)
         ));
         Map<String, Object> thresholds = new LinkedHashMap<>();
         thresholds.put("minMeanLuminance", MIN_MEAN_LUMINANCE);
         thresholds.put("minNonzeroPixelFraction",
                 MIN_NONZERO_PIXEL_FRACTION);
+        thresholds.put("maxMeanLuminance", MAX_MEAN_LUMINANCE);
+        thresholds.put("maxP95Luminance", MAX_P95_LUMINANCE);
+        thresholds.put("saturatedLuminance", SATURATED_LUMINANCE);
+        thresholds.put("maxSaturatedPixelFraction",
+                MAX_SATURATED_PIXEL_FRACTION);
+        thresholds.put("minMidtonePixelFraction",
+                MIN_MIDTONE_PIXEL_FRACTION);
         thresholds.put("maxCameraChromaticityDistance",
                 MAX_CAMERA_CHROMATICITY_DISTANCE);
         thresholds.put("maxFrameChromaticityDistance",
@@ -688,6 +783,18 @@ final class ShaderGameTestReporter {
                 MAX_RELATIVE_FRAME_LUMINANCE_STDDEV);
         thresholds.put("maxRelativeHalfLuminanceDrift",
                 MAX_RELATIVE_HALF_LUMINANCE_DRIFT);
+        thresholds.put("requiredConsecutiveStableSamples",
+                REQUIRED_CONSECUTIVE_STABLE_SAMPLES);
+        thresholds.put("expectedRestirDenoiserPasses",
+                EXPECTED_RESTIR_DENOISER_PASSES);
+        thresholds.put("maxInactivePipelineReloadTicks",
+                MAX_INACTIVE_PIPELINE_RELOAD_TICKS);
+        thresholds.put("maxReadinessChromaticityDistance",
+                MAX_LIGHTING_FRAME_CHROMATICITY_DISTANCE);
+        thresholds.put("maxReadinessRelativeLuminanceChange",
+                MAX_READINESS_RELATIVE_LUMINANCE_CHANGE);
+        thresholds.put("maxReadinessNonzeroFractionChange",
+                MAX_READINESS_NONZERO_FRACTION_CHANGE);
         thresholds.put("minStablePositiveTargetConfidence",
                 MIN_STABLE_POSITIVE_TARGET_CONFIDENCE);
         thresholds.put("minReservoirFinitePixelFraction",
@@ -716,6 +823,37 @@ final class ShaderGameTestReporter {
             metrics.put(
                     "meanLuminance",
                     (a.meanLuminance + b.meanLuminance) * 0.5
+            );
+            metrics.put(
+                    "meanP95Luminance",
+                    (a.meanP95Luminance + b.meanP95Luminance) * 0.5
+            );
+            metrics.put(
+                    "meanSaturatedPixelFraction",
+                    (a.meanSaturatedPixelFraction
+                            + b.meanSaturatedPixelFraction) * 0.5
+            );
+            metrics.put(
+                    "meanMidtonePixelFraction",
+                    (a.meanMidtonePixelFraction
+                            + b.meanMidtonePixelFraction) * 0.5
+            );
+            metrics.put(
+                    "boundedExposure",
+                    (a.meanLuminance + b.meanLuminance) * 0.5
+                            <= MAX_MEAN_LUMINANCE
+                            && Math.max(
+                                    a.meanP95Luminance,
+                                    b.meanP95Luminance
+                            ) <= MAX_P95_LUMINANCE
+                            && Math.max(
+                                    a.meanSaturatedPixelFraction,
+                                    b.meanSaturatedPixelFraction
+                            ) <= MAX_SATURATED_PIXEL_FRACTION
+                            && Math.min(
+                                    a.meanMidtonePixelFraction,
+                                    b.meanMidtonePixelFraction
+                            ) >= MIN_MIDTONE_PIXEL_FRACTION
             );
             metrics.put(
                     "nonzeroLight",
@@ -805,20 +943,23 @@ final class ShaderGameTestReporter {
     }
 
     private static Map<String, Object> warmupReadinessMetrics(
-            int discardedFrames,
-            boolean ready,
-            LightingFrameMetrics lighting,
-            ReservoirFrameMetrics reservoir
+            CaptureReadiness readiness
     ) {
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("discardedFrames", discardedFrames);
-        result.put("ready", ready);
+        result.put("discardedFrames", readiness.discardedFrames);
+        result.put("ready", readiness.isReady());
+        result.put("consecutiveStableSamples",
+                readiness.consecutiveStableSamples);
+        LightingFrameMetrics lighting = readiness.lastDiscardedLighting;
         if (lighting != null) {
             result.put("lightingFinitePixelFraction",
                     lighting.finitePixelFraction);
             result.put("lightingNonzeroPixelFraction",
                     lighting.nonzeroPixelFraction);
+            result.put("lightingMeanLuminance", lighting.meanLuminance);
+            result.put("lightingChromaticity", lighting.chromaticity);
         }
+        ReservoirFrameMetrics reservoir = readiness.lastDiscardedReservoir;
         if (reservoir != null) {
             result.put("reservoirFinitePixelFraction",
                     reservoir.finitePixelFraction);
@@ -828,10 +969,48 @@ final class ShaderGameTestReporter {
                     reservoir.meanPositiveTargetConfidence);
             result.put("maxConfidence", reservoir.maxConfidence);
         }
-        if (lighting != null && reservoir != null) {
-            result.put("lastRejectedReason",
-                    restirReadinessFailure(lighting, reservoir));
+        result.put("lastDiscardedReason", readiness.lastDiscardedReason);
+        if (readiness.lastChromaticityDistance != null) {
+            result.put("lastChromaticityDistance",
+                    readiness.lastChromaticityDistance);
+            result.put("lastRelativeLuminanceChange",
+                    readiness.lastRelativeLuminanceChange);
+            result.put("lastNonzeroFractionChange",
+                    readiness.lastNonzeroFractionChange);
         }
+        return result;
+    }
+
+    private static Map<String, Object> reservoirSplattingHistoryMetrics(
+            ReservoirSplattingRendering.HistorySnapshot snapshot
+    ) {
+        if (snapshot == null) {
+            return Map.of("available", false);
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("available", true);
+        result.put("historyValid", snapshot.historyValid());
+        result.put("hasCompletedFrame", snapshot.hasCompletedFrame());
+        result.put("resized", snapshot.resized());
+        result.put("lightContentGeneration",
+                snapshot.lightContentGeneration());
+        result.put("previousLightContentGeneration",
+                snapshot.previousLightContentGeneration());
+        result.put("worldContentGeneration",
+                snapshot.worldContentGeneration());
+        result.put("previousWorldContentGeneration",
+                snapshot.previousWorldContentGeneration());
+        result.put(
+                "lightGenerationChanged",
+                snapshot.lightContentGeneration() !=
+                        snapshot.previousLightContentGeneration()
+        );
+        result.put(
+                "worldGenerationChanged",
+                snapshot.worldContentGeneration() !=
+                        snapshot.previousWorldContentGeneration()
+        );
         return result;
     }
 
@@ -1062,7 +1241,9 @@ final class ShaderGameTestReporter {
                 "combinedRestirGiEnabled", properties.useRestirCombinedGi(),
                 "alphaMode", properties.getAlphaMode().name(),
                 "spatialReuseSamples",
-                properties.getRestirSpatialReuseSamples()
+                properties.getRestirSpatialReuseSamples(),
+                "restirDenoiserPasses",
+                properties.getRestirDenoiserPasses()
         );
 
         Path settingsFile = FabricLoader.getInstance()
@@ -1098,7 +1279,9 @@ final class ShaderGameTestReporter {
                 && !properties.useRestirCombinedGi()
                 && properties.getAlphaMode() == AlphaMode.BLOCK
                 && properties.getRestirSpatialReuseSamples()
-                == EXPECTED_SPATIAL_REUSE_SAMPLES;
+                == EXPECTED_SPATIAL_REUSE_SAMPLES
+                && properties.getRestirDenoiserPasses()
+                == EXPECTED_RESTIR_DENOISER_PASSES;
     }
 
     private Map<String, Object> cameraMetrics(
@@ -1137,10 +1320,16 @@ final class ShaderGameTestReporter {
         result.put("maxFrameChromaticityDistance",
                 aggregate.maxFrameChromaticityDistance);
         result.put("meanLuminance", aggregate.meanLuminance);
+        result.put("meanP95Luminance", aggregate.meanP95Luminance);
+        result.put("meanP99Luminance", aggregate.meanP99Luminance);
         result.put("meanSpatialLuminanceVariance",
                 aggregate.meanSpatialLuminanceVariance);
         result.put("meanLuminanceContrastP95P10",
                 aggregate.meanLuminanceContrastP95P10);
+        result.put("meanSaturatedPixelFraction",
+                aggregate.meanSaturatedPixelFraction);
+        result.put("meanMidtonePixelFraction",
+                aggregate.meanMidtonePixelFraction);
         result.put("meanNonzeroPixelFraction",
                 aggregate.meanNonzeroPixelFraction);
         result.put("meanSampledPixelCount",
@@ -1254,7 +1443,11 @@ final class ShaderGameTestReporter {
             List<Double> chromaticity,
             double meanLuminance,
             double spatialLuminanceVariance,
+            double p95Luminance,
+            double p99Luminance,
             double luminanceContrastP95P10,
+            double saturatedPixelFraction,
+            double midtonePixelFraction,
             double nonzeroPixelFraction
     ) {
         private static final int SAMPLE_STRIDE = 2;
@@ -1278,6 +1471,7 @@ final class ShaderGameTestReporter {
             int sampledPixels = 0;
             int midtonePixels = 0;
             int nonzeroPixels = 0;
+            int saturatedPixels = 0;
 
             int maxX = Math.min(width, roiX + roiWidth);
             int maxY = Math.min(height, roiY + roiHeight);
@@ -1304,6 +1498,9 @@ final class ShaderGameTestReporter {
                     sampledPixels++;
                     if (luminance > 1.0 / 255.0) {
                         nonzeroPixels++;
+                    }
+                    if (luminance >= SATURATED_LUMINANCE) {
+                        saturatedPixels++;
                     }
                     if (luminance >= MIN_MIDTONE_LUMINANCE
                             && luminance <= MAX_MIDTONE_LUMINANCE) {
@@ -1344,6 +1541,11 @@ final class ShaderGameTestReporter {
                     sampledPixels,
                     0.95
             );
+            double p99 = histogramPercentile(
+                    luminanceHistogram,
+                    sampledPixels,
+                    0.99
+            );
 
             return new FrameMetrics(
                     width,
@@ -1359,7 +1561,11 @@ final class ShaderGameTestReporter {
                     chromaticity,
                     meanLuminance,
                     luminanceVariance,
+                    p95,
+                    p99,
                     p95 - p10,
+                    (double) saturatedPixels / sampledPixels,
+                    (double) midtonePixels / sampledPixels,
                     (double) nonzeroPixels / sampledPixels
             );
         }
@@ -1534,6 +1740,130 @@ final class ShaderGameTestReporter {
                                     ::confidenceCapViolationCount)
                             .sum()
             );
+        }
+    }
+
+    private static final class CaptureReadiness {
+        private int discardedFrames;
+        private int consecutiveStableSamples;
+        private LightingFrameMetrics previousLighting;
+        private LightingFrameMetrics lastDiscardedLighting;
+        private ReservoirFrameMetrics lastDiscardedReservoir;
+        private String lastDiscardedReason = "no samples evaluated";
+        private Double lastChromaticityDistance;
+        private Double lastRelativeLuminanceChange;
+        private Double lastNonzeroFractionChange;
+
+        boolean shouldCapture(
+                LightingFrameMetrics lighting,
+                ReservoirFrameMetrics reservoir
+        ) {
+            boolean previouslyReady = isReady();
+            String sampleFailure = restirReadinessFailure(
+                    lighting,
+                    reservoir
+            );
+            if (!sampleFailure.isEmpty()) {
+                consecutiveStableSamples = 0;
+                previousLighting = lighting;
+                discard(lighting, reservoir, sampleFailure, null, null, null);
+                return false;
+            }
+
+            if (consecutiveStableSamples == 0 || previousLighting == null) {
+                consecutiveStableSamples = 1;
+                previousLighting = lighting;
+                discard(
+                        lighting,
+                        reservoir,
+                        "collecting the first stable HDR lighting sample",
+                        null,
+                        null,
+                        null
+                );
+                return false;
+            }
+
+            double chromaticityDistance = distance(
+                    previousLighting.chromaticity,
+                    lighting.chromaticity
+            );
+            double luminanceScale = Math.max(
+                    Math.max(
+                            Math.abs(previousLighting.meanLuminance),
+                            Math.abs(lighting.meanLuminance)
+                    ),
+                    MIN_LIGHTING_MEAN_LUMINANCE
+            );
+            double relativeLuminanceChange = Math.abs(
+                    lighting.meanLuminance -
+                            previousLighting.meanLuminance
+            ) / luminanceScale;
+            double nonzeroFractionChange = Math.abs(
+                    lighting.nonzeroPixelFraction -
+                            previousLighting.nonzeroPixelFraction
+            );
+            String stabilityFailure = lightingStabilityFailure(
+                    chromaticityDistance,
+                    relativeLuminanceChange,
+                    nonzeroFractionChange
+            );
+            previousLighting = lighting;
+            if (!stabilityFailure.isEmpty()) {
+                consecutiveStableSamples = 1;
+                discard(
+                        lighting,
+                        reservoir,
+                        stabilityFailure,
+                        chromaticityDistance,
+                        relativeLuminanceChange,
+                        nonzeroFractionChange
+                );
+                return false;
+            }
+
+            consecutiveStableSamples = Math.min(
+                    consecutiveStableSamples + 1,
+                    REQUIRED_CONSECUTIVE_STABLE_SAMPLES
+            );
+            if (!previouslyReady) {
+                discard(
+                        lighting,
+                        reservoir,
+                        isReady()
+                                ? "HDR readiness established; capture begins "
+                                + "with the next stable sample"
+                                : "collecting consecutive stable HDR lighting "
+                                + "samples",
+                        chromaticityDistance,
+                        relativeLuminanceChange,
+                        nonzeroFractionChange
+                );
+                return false;
+            }
+            return true;
+        }
+
+        boolean isReady() {
+            return consecutiveStableSamples
+                    >= REQUIRED_CONSECUTIVE_STABLE_SAMPLES;
+        }
+
+        private void discard(
+                LightingFrameMetrics lighting,
+                ReservoirFrameMetrics reservoir,
+                String reason,
+                Double chromaticityDistance,
+                Double relativeLuminanceChange,
+                Double nonzeroFractionChange
+        ) {
+            discardedFrames++;
+            lastDiscardedLighting = lighting;
+            lastDiscardedReservoir = reservoir;
+            lastDiscardedReason = reason;
+            lastChromaticityDistance = chromaticityDistance;
+            lastRelativeLuminanceChange = relativeLuminanceChange;
+            lastNonzeroFractionChange = nonzeroFractionChange;
         }
     }
 
@@ -1756,7 +2086,11 @@ final class ShaderGameTestReporter {
             double maxFrameChromaticityDistance,
             double meanLuminance,
             double meanSpatialLuminanceVariance,
+            double meanP95Luminance,
+            double meanP99Luminance,
             double meanLuminanceContrastP95P10,
+            double meanSaturatedPixelFraction,
+            double meanMidtonePixelFraction,
             double meanNonzeroPixelFraction,
             double meanSampledPixelCount,
             double meanMidtonePixelCount
@@ -1797,8 +2131,25 @@ final class ShaderGameTestReporter {
                             .average()
                             .orElse(0.0),
                     frames.stream()
+                            .mapToDouble(FrameMetrics::p95Luminance)
+                            .average()
+                            .orElse(0.0),
+                    frames.stream()
+                            .mapToDouble(FrameMetrics::p99Luminance)
+                            .average()
+                            .orElse(0.0),
+                    frames.stream()
                             .mapToDouble(
                                     FrameMetrics::luminanceContrastP95P10)
+                            .average()
+                            .orElse(0.0),
+                    frames.stream()
+                            .mapToDouble(
+                                    FrameMetrics::saturatedPixelFraction)
+                            .average()
+                            .orElse(0.0),
+                    frames.stream()
+                            .mapToDouble(FrameMetrics::midtonePixelFraction)
                             .average()
                             .orElse(0.0),
                     frames.stream()

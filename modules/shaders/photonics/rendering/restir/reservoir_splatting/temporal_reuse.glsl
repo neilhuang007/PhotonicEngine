@@ -109,19 +109,24 @@ void direct_splat_temporal_reuse(
                     current_reservoir.total_samples
         );
         float m2 = 0.0f;
+        DirectReconnection reverse_reconnection;
         vec2 reverse_fractional_pixel;
+        float reverse_target;
         float reverse_jacobian;
         if (direct_splat_history_is_valid() &&
                 !direct_reconnection_is_hand(current_reconnection) &&
-                direct_splat_shift_primary(
+                direct_splat_shift_and_evaluate_retained_path(
+                    current_reservoir.smple,
                     current_reconnection,
                     false,
+                    reverse_reconnection,
                     reverse_fractional_pixel,
+                    reverse_target,
                     reverse_jacobian
                 )) {
             ivec2 reverse_pixel = ivec2(floor(reverse_fractional_pixel));
             m2 = direct_reservoir_sanitize_weight(
-                current_target * reverse_jacobian *
+                reverse_target * reverse_jacobian *
                         direct_splat_previous_confidence(reverse_pixel)
             );
         }
@@ -163,29 +168,15 @@ void direct_splat_temporal_reuse(
         if (previous_reservoir.target_pdf > 0.0f &&
                 direct_sample_reproject(shifted_sample)) {
             vec2 shifted_fractional_pixel;
-            if (direct_splat_shift_primary(
-                    shifted_reconnection,
+            if (direct_splat_shift_and_evaluate_retained_path(
+                    shifted_sample,
+                    previous_reconnection,
                     true,
+                    shifted_reconnection,
                     shifted_fractional_pixel,
+                    shifted_target,
                     shifted_jacobian
             )) {
-                float source_secondary_jacobian =
-                        shifted_reconnection.secondary_path_jacobian;
-                shifted_reconnection.subpixel =
-                        fract(shifted_fractional_pixel);
-                direct_splat_evaluate_retained_path(
-                    shifted_reconnection,
-                    shifted_sample,
-                    shifted_target
-                );
-                if (!direct_splat_apply_secondary_jacobian(
-                        source_secondary_jacobian,
-                        shifted_reconnection.secondary_path_jacobian,
-                        shifted_jacobian
-                )) {
-                    shifted_target = 0.0f;
-                    shifted_jacobian = 1.0f;
-                }
                 float shifted_measure = shifted_target * shifted_jacobian;
                 float m1;
                 if (!direct_reservoir_is_valid_measure(shifted_measure)) {

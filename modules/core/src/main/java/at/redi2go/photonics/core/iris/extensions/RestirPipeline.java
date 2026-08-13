@@ -22,6 +22,7 @@ import static at.redi2go.photonics.core.iris.pipeline.texture.AttachmentUsage.FL
 
 public class RestirPipeline extends AbstractPhotonicsExtension {
     private final int denoiserPasses;
+    private final ReservoirSplattingRendering reservoirSplatting;
 
     private int atrousIteration = 0;
     private final UniformUpdater atrousUpdater = new UniformUpdater();
@@ -64,6 +65,7 @@ public class RestirPipeline extends AbstractPhotonicsExtension {
                     )
             );
         }
+        this.reservoirSplatting = reservoirSplatting;
 
         var denoiseFramebuffer = irisFactory.newFramebuffer(properties.getRenderScale())
                 .addAttachment("denoise_result", ITextureFormat.rgba32ui(), FLIP | CREATE_SAMPLER | CREATE_PREV_SAMPLER, this::isDenoisingEnabled)
@@ -202,6 +204,17 @@ public class RestirPipeline extends AbstractPhotonicsExtension {
 
     public boolean isDenoisingEnabled() {
         return isRestirEnabled() && denoiserPasses > 0;
+    }
+
+    public int denoiserPasses() {
+        return denoiserPasses;
+    }
+
+    public ReservoirSplattingRendering.HistorySnapshot
+    reservoirSplattingHistorySnapshot() {
+        return reservoirSplatting == null
+                ? null
+                : reservoirSplatting.historySnapshot();
     }
 
     private String spatialReusePass(String file) {

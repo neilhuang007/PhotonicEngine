@@ -235,4 +235,62 @@ bool direct_splat_shift_primary(
     return direct_reservoir_is_valid_measure(jacobian);
 }
 
+// Complete retained-path shift for the static, pinhole, finite block-light
+// specialization used by Minecraft. A valid temporal history guarantees that
+// block geometry and the light list have not changed. The mapped DirectSample
+// therefore identifies the target-domain light vertex; general animated path
+// suffixes would require historical light/path state that this representation
+// intentionally does not claim to support.
+bool direct_splat_shift_and_evaluate_retained_path(
+    DirectSample target_sample,
+    DirectReconnection source_reconnection,
+    bool source_previous_frame,
+    out DirectReconnection shifted_reconnection,
+    out vec2 shifted_fractional_pixel,
+    out float shifted_target,
+    out float shifted_jacobian
+) {
+    shifted_reconnection = source_reconnection;
+    shifted_fractional_pixel = vec2(0.0f);
+    shifted_target = 0.0f;
+    shifted_jacobian = 1.0f;
+
+    float source_secondary_path_jacobian =
+            source_reconnection.secondary_path_jacobian;
+    if (!direct_splat_shift_primary(
+            source_reconnection,
+            source_previous_frame,
+            shifted_fractional_pixel,
+            shifted_jacobian
+    )) return false;
+
+    Light target_light = direct_sample_get_light(target_sample);
+    if (!light_is_valid(target_light)) return false;
+    shifted_reconnection.light_rt_pos = direct_sample_get_position(
+        target_sample,
+        target_light
+    );
+    if (!direct_reconnection_vector_is_finite(
+            shifted_reconnection.light_rt_pos
+    )) return false;
+
+    if (!direct_splat_evaluate_retained_path(
+            shifted_reconnection,
+            target_sample,
+            shifted_target
+    )) return false;
+    if (!direct_splat_apply_secondary_jacobian(
+            source_secondary_path_jacobian,
+            shifted_reconnection.secondary_path_jacobian,
+            shifted_jacobian
+    )) {
+        shifted_target = 0.0f;
+        shifted_jacobian = 1.0f;
+        return false;
+    }
+
+    shifted_reconnection.subpixel = fract(shifted_fractional_pixel);
+    return true;
+}
+
 #endif

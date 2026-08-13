@@ -32,6 +32,20 @@ const float primary_emission_max_distance = 64.0f;
 
 vec3 sample_visible_primary_emission() {
     vec3 surface_position = frag_player_pos + rt_camera_position;
+    vec3 interior_position =
+            surface_position - frag_geo_normal * 0.01f;
+
+    RayIterator surface_ray;
+    ray_iter_begin(surface_ray, interior_position, -frag_geo_normal);
+    RayResult surface_hit = ray_iter_next_block(
+        surface_ray,
+        floor(interior_position) + 0.5f
+    );
+    Light surface_light = ray_result_light_data(surface_hit);
+    if (light_is_valid(surface_light)) return surface_light.color;
+
+    if (!frag_is_light_transmissive) return vec3(0.0f);
+
     vec3 camera_ray_direction = normalize(
         surface_position - rt_camera_position
     );

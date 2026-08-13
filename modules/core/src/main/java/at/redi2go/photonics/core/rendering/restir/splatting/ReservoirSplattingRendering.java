@@ -70,6 +70,11 @@ public final class ReservoirSplattingRendering implements RenderingComponent {
     private boolean historyValid;
     private long previousLightContentGeneration;
     private long previousWorldContentGeneration;
+    private boolean lastResizeChangedHistory;
+    private long lastLightContentGeneration;
+    private long lastWorldContentGeneration;
+    private long lastPreviousLightContentGeneration;
+    private long lastPreviousWorldContentGeneration;
     private boolean closed;
 
     public ReservoirSplattingRendering(
@@ -116,10 +121,12 @@ public final class ReservoirSplattingRendering implements RenderingComponent {
     }
 
     /**
-     * Inserts the four ordered binning stages. Iris places an SSBO memory
-     * barrier between each compute pass. All stages dispatch over the complete
-     * view; shaders reject padded invocations before accessing the packed
-     * buffers.
+     * Inserts the four ordered binning stages. Each stage writes storage-buffer
+     * data consumed by the next stage, and the sorted output is consumed by the
+     * following temporal reuse pass, so the barriers are explicit action
+     * boundaries rather than renderer-internal assumptions. All stages dispatch
+     * over the complete view; shaders reject padded invocations before
+     * accessing the packed buffers.
      */
     public IrisPipeline.Builder addPasses(
             IrisPipeline.Builder builder,
@@ -133,6 +140,7 @@ public final class ReservoirSplattingRendering implements RenderingComponent {
                         FULL_VIEW_HEIGHT_SCALE,
                         condition
                 )
+                .thenShaderStorageBarrier(condition)
                 .relativeComputePass(
                         "reproject previous reservoirs",
                         REPROJECT_SHADER,
@@ -140,6 +148,7 @@ public final class ReservoirSplattingRendering implements RenderingComponent {
                         FULL_VIEW_HEIGHT_SCALE,
                         condition
                 )
+                .thenShaderStorageBarrier(condition)
                 .relativeComputePass(
                         "compute reservoir splatting cell offsets",
                         COMPUTE_CELL_OFFSETS_SHADER,
@@ -147,13 +156,15 @@ public final class ReservoirSplattingRendering implements RenderingComponent {
                         FULL_VIEW_HEIGHT_SCALE,
                         condition
                 )
+                .thenShaderStorageBarrier(condition)
                 .relativeComputePass(
                         "sort reprojected reservoirs",
                         SORT_SHADER,
                         FULL_VIEW_WIDTH_SCALE,
                         FULL_VIEW_HEIGHT_SCALE,
                         condition
-                );
+                )
+                .thenShaderStorageBarrier(condition);
     }
 
     @Override
@@ -162,6 +173,11 @@ public final class ReservoirSplattingRendering implements RenderingComponent {
         boolean resized = resizeToViewport();
         long currentLightContentGeneration = lightContentGeneration.getAsLong();
         long currentWorldContentGeneration = worldContentGeneration.getAsLong();
+        lastResizeChangedHistory = resized;
+        lastLightContentGeneration = currentLightContentGeneration;
+        lastWorldContentGeneration = currentWorldContentGeneration;
+        lastPreviousLightContentGeneration = previousLightContentGeneration;
+        lastPreviousWorldContentGeneration = previousWorldContentGeneration;
         historyValid = hasCompletedFrame &&
                 !resized &&
                 currentLightContentGeneration == previousLightContentGeneration &&
@@ -204,6 +220,18 @@ public final class ReservoirSplattingRendering implements RenderingComponent {
         buffers.addDefaultBuffer(
                 SPATIAL_NEIGHBOR_OFFSETS_BUFFER_NAME,
                 () -> spatialNeighborOffsetsBuffer
+        );
+    }
+
+    public HistorySnapshot historySnapshot() {
+        return new HistorySnapshot(
+                historyValid,
+                hasCompletedFrame,
+                lastResizeChangedHistory,
+                lastLightContentGeneration,
+                lastPreviousLightContentGeneration,
+                lastWorldContentGeneration,
+                lastPreviousWorldContentGeneration
         );
     }
 
@@ -368,5 +396,16 @@ public final class ReservoirSplattingRendering implements RenderingComponent {
         IGpuBuffer current = currentReconnectionBuffer;
         currentReconnectionBuffer = spatialReconnectionBuffer;
         spatialReconnectionBuffer = current;
+    }
+
+    public record HistorySnapshot(
+            boolean historyValid,
+            boolean hasCompletedFrame,
+            boolean resized,
+            long lightContentGeneration,
+            long previousLightContentGeneration,
+            long worldContentGeneration,
+            long previousWorldContentGeneration
+    ) {
     }
 }

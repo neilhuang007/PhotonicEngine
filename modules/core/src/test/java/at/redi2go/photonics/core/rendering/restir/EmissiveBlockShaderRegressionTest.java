@@ -60,6 +60,63 @@ class EmissiveBlockShaderRegressionTest {
     }
 
     @Test
+    void handheldSamplesAreInitializedAndValidatedAfterAttenuation()
+            throws IOException {
+        String handheld = readShader("rendering/handheld_lighting.glsl");
+        int emptyFactory = handheld.indexOf(
+                "HandheldSample handheld_sample_empty()"
+        );
+        int mainInitialization = handheld.indexOf(
+                "HandheldSample main_hand = handheld_sample_empty();"
+        );
+        int offInitialization = handheld.indexOf(
+                "HandheldSample off_hand = handheld_sample_empty();"
+        );
+        int trace = handheld.indexOf("bool handheld_sample_trace(");
+        int tintInitialization = handheld.indexOf(
+                "tint_color = vec3(1.0f);",
+                trace
+        );
+        int transmittanceInitialization = handheld.indexOf(
+                "light_transmittance = 1.0f;",
+                trace
+        );
+        int traceEarlyReturn = handheld.indexOf(
+                "if (!smple.valid || frag_is_hand) return false;",
+                trace
+        );
+
+        assertTrue(
+                emptyFactory >= 0 && mainInitialization > emptyFactory &&
+                        offInitialization > mainInitialization,
+                "both handheld samples must have defined light, direction, " +
+                        "luminance, and validity before mode-specific selection"
+        );
+        assertTrue(
+                tintInitialization > trace &&
+                        transmittanceInitialization > tintInitialization &&
+                        traceEarlyReturn > transmittanceInitialization,
+                "GLSL out parameters must be initialized before every early " +
+                        "return from handheld visibility"
+        );
+        assertTrue(
+                handheld.contains(
+                        "smple.light.color = attenuated_color;"
+                ) && handheld.contains(
+                        "smple.luminance = ph_luminance(attenuated_color);"
+                ) && handheld.contains(
+                        "handheld_color_is_finite(attenuated_color)"
+                ),
+                "handheld validity and selection must use finite attenuated " +
+                        "radiance instead of the unattenuated item color"
+        );
+        assertFalse(
+                handheld.contains("luminanace"),
+                "the misspelled luminance field hides inconsistent sample use"
+        );
+    }
+
+    @Test
     void transparentLightTargetTerminatesVisibilityRay() throws IOException {
         String tracing = readShader("internal/tracing/simple.glsl");
 
@@ -244,6 +301,12 @@ class EmissiveBlockShaderRegressionTest {
         int cameraRay = diffusePass.indexOf(
                 "vec3 camera_ray_direction = normalize("
         );
+        int currentSurfaceTrace = diffusePass.indexOf(
+                "ray_iter_next_block("
+        );
+        int opaqueGuard = diffusePass.indexOf(
+                "if (!frag_is_light_transmissive) return vec3(0.0f);"
+        );
         int finiteBudget = diffusePass.indexOf(
                 "primary_ray.iterations = min("
         );
@@ -261,10 +324,11 @@ class EmissiveBlockShaderRegressionTest {
         );
 
         assertTrue(
-                cameraRay >= 0 && finiteBudget > cameraRay &&
+                currentSurfaceTrace >= 0 && opaqueGuard > currentSurfaceTrace &&
+                        cameraRay > opaqueGuard && finiteBudget > cameraRay &&
                         finiteDistance > finiteBudget,
-                "visible emission must follow the finite camera ray through " +
-                        "the raster primary surface"
+                "the current raster surface must be sampled first, and camera " +
+                        "continuation must be forbidden behind opaque primaries"
         );
         assertTrue(
                 materialCheck > finiteBudget &&

@@ -31,6 +31,56 @@ class RestirPipelineLifecycleTest {
     }
 
     @Test
+    void reservoirSplattingBinningStagesAreSeparatedByStorageBarriers()
+            throws IOException {
+        String source = Files.readString(findRepositoryRoot().resolve(
+                "modules/core/src/main/java/at/redi2go/photonics/core/" +
+                        "rendering/restir/splatting/" +
+                        "ReservoirSplattingRendering.java"
+        ));
+
+        int addPasses = source.indexOf(
+                "public IrisPipeline.Builder addPasses("
+        );
+        int clear = source.indexOf("CLEAR_SHADER", addPasses);
+        int clearBarrier = source.indexOf(
+                ".thenShaderStorageBarrier(condition)",
+                clear
+        );
+        int reproject = source.indexOf("REPROJECT_SHADER", clearBarrier);
+        int reprojectBarrier = source.indexOf(
+                ".thenShaderStorageBarrier(condition)",
+                reproject
+        );
+        int cellOffsets = source.indexOf(
+                "COMPUTE_CELL_OFFSETS_SHADER",
+                reprojectBarrier
+        );
+        int cellOffsetsBarrier = source.indexOf(
+                ".thenShaderStorageBarrier(condition)",
+                cellOffsets
+        );
+        int sort = source.indexOf("SORT_SHADER", cellOffsetsBarrier);
+        int sortBarrier = source.indexOf(
+                ".thenShaderStorageBarrier(condition)",
+                sort
+        );
+        int methodEnd = source.indexOf("@Override", addPasses);
+
+        assertTrue(addPasses >= 0, "reservoir splatting pass builder is missing");
+        assertTrue(clear >= 0 && clearBarrier > clear);
+        assertTrue(reproject > clearBarrier);
+        assertTrue(reprojectBarrier > reproject);
+        assertTrue(cellOffsets > reprojectBarrier);
+        assertTrue(cellOffsetsBarrier > cellOffsets);
+        assertTrue(sort > cellOffsetsBarrier);
+        assertTrue(
+                sortBarrier > sort && sortBarrier < methodEnd,
+                "sort output must be made visible before temporal reuse reads it"
+        );
+    }
+
+    @Test
     void directReconnectionConsumersAreSeparatedByStorageBarriers()
             throws IOException {
         String source = Files.readString(findRepositoryRoot().resolve(

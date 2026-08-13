@@ -23,7 +23,7 @@ layout(local_size_x = 16, local_size_y = 16) in;
 #include "/photonics/rendering/restir/reservoir_splatting/buffers.glsl"
 #include "/photonics/rendering/restir/reservoir_splatting/reconnection.glsl"
 
-bool project_reconnection_to_current_frame(
+bool direct_splat_project_reconnection_to_current_frame(
     DirectReconnection reconnection,
     out vec2 fractional_pixel
 ) {
@@ -41,7 +41,9 @@ bool project_reconnection_to_current_frame(
             all(lessThan(fractional_pixel, PH_VIEW_SIZE));
 }
 
-bool current_camera_sees_primary_hit(DirectReconnection reconnection) {
+bool direct_splat_current_camera_sees_primary_hit(
+    DirectReconnection reconnection
+) {
     vec3 primary_rt_pos = direct_reconnection_visibility_target(reconnection);
     vec3 unused_tint;
     float unused_transmittance;
@@ -85,11 +87,11 @@ void main() {
             direct_reconnection_is_hand(reconnection)) return;
 
     vec2 fractional_pixel;
-    if (!project_reconnection_to_current_frame(
+    if (!direct_splat_project_reconnection_to_current_frame(
             reconnection,
             fractional_pixel
     )) return;
-    if (!current_camera_sees_primary_hit(reconnection)) return;
+    if (!direct_splat_current_camera_sees_primary_hit(reconnection)) return;
 
     uint target_cell = ph_splat_pixel_index(ivec2(floor(fractional_pixel)));
     uint append_index = atomicAdd(
