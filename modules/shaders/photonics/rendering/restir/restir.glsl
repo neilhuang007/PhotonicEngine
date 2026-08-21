@@ -37,32 +37,19 @@ void sample_history_load(out SampleHistory smple) {
     smple.variance = vec4(0f);
 }
 
-SampleHistory sample_history_mix(SampleHistory s1, SampleHistory s2, float a) {
-    if (!sample_history_is_valid(s1)) {
-        a = 1f;
-    } else if (!sample_history_is_valid(s2)) {
-        a = 0f;
-    } else if (!sample_history_is_valid(s1) && !sample_history_is_valid(s2)) {
-        return INVALID_HISTORY;
-    }
-
-    return SampleHistory(
-        mix(s1.lighting, s2.lighting, a),
-        mix(s1.variance, s2.variance, a)
-    );
-}
-
-SampleHistory sample_history_reproject_single(ivec2 texel, float distance_factor) {
+SampleHistory sample_history_reproject_single(ivec2 texel) {
     FragData prev_frag;
     frag_data_load_previous(prev_frag, texel);
 
-    if (!frag_is_bad_angle) {
-        vec3 d = frag_data_player_pos(prev_frag) - frag_player_pos;
-        if (dot(d, d) > distance_factor) return INVALID_HISTORY;
-    }
+    if (!frag_data_is_in_world(prev_frag)) return INVALID_HISTORY;
 
     vec3 n = frag_data_geo_normal(prev_frag);
     if (dot(n, frag_geo_normal) < 0.99f) return INVALID_HISTORY;
+
+    vec3 distance_from_plane =
+            frag_player_pos - frag_data_player_pos(prev_frag);
+    if (abs(dot(distance_from_plane, frag_geo_normal)) > 0.25f)
+        return INVALID_HISTORY;
 
     vec4 lighting = texelFetch(prev_restir_lighting, ivec2(texel), 0);
     if (any(isnan(lighting))) return INVALID_HISTORY;
@@ -73,39 +60,53 @@ SampleHistory sample_history_reproject_single(ivec2 texel, float distance_factor
     return SampleHistory(lighting, variance);
 }
 
-SampleHistory sample_history_reproject_mixed(vec2 center, float distance_factor) {
-    ivec2 icenter = ivec2(center);
-
-    SampleHistory c_00 = sample_history_reproject_single(icenter + ivec2(0, 0), distance_factor);
-    SampleHistory c_10 = sample_history_reproject_single(icenter + ivec2(1, 0), distance_factor);
-    SampleHistory c_01 = sample_history_reproject_single(icenter + ivec2(0, 1), distance_factor);
-    SampleHistory c_11 = sample_history_reproject_single(icenter + ivec2(1, 1), distance_factor);
-
-    SampleHistory result = sample_history_mix(
-        sample_history_mix(c_00, c_10, fract(center.x)),
-        sample_history_mix(c_01, c_11, fract(center.x)),
-        fract(center.y)
-    );
-
-    if (!sample_history_is_valid(result))
-        return SampleHistory(vec4(0.0f), vec4(0.0f));
-
-    return result;
-}
-
 void sample_history_reproject(out SampleHistory smple) {
-    vec3 dist = frag_rt_pos - rt_camera_position;
-
-    const float block_divsor = 64.0f * PH_RENDER_SCALE;
-    float distance_factor = max(dot(dist, dist) / block_divsor, 0.1f);
-
     vec2 center = ph_reproject_player_pos(
             frag_player_pos,
             frag_is_hand,
             get_taa_jitter()
-    ).xy * PH_VIEW_SIZE;
+    ).xy * PH_VIEW_SIZE - 0.5f;
 
-    smple = sample_history_reproject_mixed(center - 0.5f, distance_factor);
+    ivec2 base_texel = ivec2(floor(center));
+    vec2 mix_factors = fract(center);
+    ivec2 view_size = ivec2(PH_VIEW_SIZE);
+
+    const ivec2 offsets[4] = ivec2[](
+            ivec2(0, 0),
+            ivec2(1, 0),
+            ivec2(0, 1),
+            ivec2(1, 1)
+    );
+    const vec2 weight_origins[4] = vec2[](
+            vec2(1.0f, 1.0f),
+            vec2(0.0f, 1.0f),
+            vec2(1.0f, 0.0f),
+            vec2(0.0f, 0.0f)
+    );
+
+    smple = SampleHistory(vec4(0.0f), vec4(0.0f));
+    float weight_sum = 0.0f;
+
+    for (int i = 0; i < offsets.length(); ++i) {
+        ivec2 texel = base_texel + offsets[i];
+        if (any(lessThan(texel, ivec2(0))) ||
+                any(greaterThanEqual(texel, view_size))) continue;
+
+        SampleHistory history = sample_history_reproject_single(texel);
+        if (!sample_history_is_valid(history)) continue;
+
+        vec2 bilinear_weight = abs(weight_origins[i] - mix_factors);
+        float weight = bilinear_weight.x * bilinear_weight.y;
+
+        smple.lighting += history.lighting * weight;
+        smple.variance += history.variance * weight;
+        weight_sum += weight;
+    }
+
+    if (weight_sum > 0.0f) {
+        smple.lighting /= weight_sum;
+        smple.variance /= weight_sum;
+    }
 }
 
 void sample_history_combine_lighting(inout SampleHistory history, in SampleHistory smple) {

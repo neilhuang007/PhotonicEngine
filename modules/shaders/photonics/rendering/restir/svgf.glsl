@@ -24,6 +24,10 @@ const ivec2 offset[9] = ivec2[](
         ivec2(-1,  1), ivec2(0,  1), ivec2(1,  1)
 );
 
+// Variance is non-negative, leaving its half-float sign bit available for
+// sample metadata without sacrificing a color channel's sign.
+const uint SVGF_HAND_BIT = 0x80000000u;
+
 struct SvgfSample {
     vec3 color;
     float variance;
@@ -32,10 +36,11 @@ struct SvgfSample {
     float age;
 
     uint packed_normal;
+    bool is_hand;
 };
 
 SvgfSample svgf_sample_empty() {
-    return SvgfSample(vec3(0.0f), 0.0f, 1.0f, 0.0f, 0u);
+    return SvgfSample(vec3(0.0f), 0.0f, 1.0f, 0.0f, 0u, false);
 }
 
 vec3 svgf_sample_get_normal(SvgfSample smple) {
@@ -46,7 +51,7 @@ void svgf_sample_decode(out SvgfSample smple, uvec4 value) {
     vec2 unpacked = unpackHalf2x16(value.x);
     smple.color.rg = unpacked;
 
-    unpacked = unpackHalf2x16(value.y);
+    unpacked = unpackHalf2x16(value.y & ~SVGF_HAND_BIT);
     smple.color.b = unpacked.x;
     smple.variance = unpacked.y;
 
@@ -55,12 +60,15 @@ void svgf_sample_decode(out SvgfSample smple, uvec4 value) {
     smple.age = unpacked.y * PH_RESTIR_ACCUMULATION_FRAMES;
 
     smple.packed_normal = value.w;
-
+    smple.is_hand = (value.y & SVGF_HAND_BIT) != 0u;
 }
 
 void svgf_sample_encode(SvgfSample smple, out uvec4 value) {
     value.x = packHalf2x16(smple.color.rg);
-    value.y = packHalf2x16(vec2(smple.color.b, smple.variance));
+    value.y = packHalf2x16(vec2(
+            smple.color.b,
+            max(smple.variance, 0.0f)
+    )) | (smple.is_hand ? SVGF_HAND_BIT : 0u);
     value.z = packUnorm2x16(vec2(smple.depth, smple.age / PH_RESTIR_ACCUMULATION_FRAMES));
     value.w = smple.packed_normal;
 }

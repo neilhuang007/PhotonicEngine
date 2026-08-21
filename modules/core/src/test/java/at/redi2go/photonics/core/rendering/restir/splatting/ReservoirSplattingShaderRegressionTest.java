@@ -39,6 +39,12 @@ class ReservoirSplattingShaderRegressionTest {
             "rendering/restir/passes/r8_diffuse.fsh";
     private static final String DENOISING_SHADER =
             "rendering/restir/passes/r11_denoising.fsh";
+    private static final String VARIANCE_PREFILTER_SHADER =
+            "rendering/restir/passes/r10_variance_prefilter.fsh";
+    private static final String SVGF_SHADER =
+            "rendering/restir/svgf.glsl";
+    private static final String RESTIR_SHADER =
+            "rendering/restir/restir.glsl";
     private static final String TEMPORAL_REUSE_SHADER =
             "rendering/restir/reservoir_splatting/temporal_reuse.glsl";
     private static final String SHIFT_SHADER =
@@ -776,26 +782,101 @@ class ReservoirSplattingShaderRegressionTest {
     }
 
     @Test
-    void denoiserInitializesFragmentDataBeforeHandQueries()
+    void denoiserCarriesHandStateWithoutLoadingFragmentData()
             throws IOException {
-        String source = Files.readString(findShaderRoot().resolve(
+        Path shaderRoot = findShaderRoot();
+        String source = Files.readString(shaderRoot.resolve(
                 DENOISING_SHADER
         ));
+        String prefilter = Files.readString(shaderRoot.resolve(
+                VARIANCE_PREFILTER_SHADER
+        ));
+        String common = Files.readString(shaderRoot.resolve(SVGF_SHADER));
 
-        int setup = source.indexOf("setup_frag_data(0);");
-        int passWeight = source.indexOf("float pass_weight = get_pass_weight");
-        int handUse = source.indexOf("frag_is_hand", passWeight);
-
-        assertTrue(setup >= 0, "the A-trous pass must load FragData");
+        assertFalse(source.contains("setup_frag_data(0);"));
+        assertFalse(source.contains("frag_is_hand"));
+        assertFalse(source.contains(
+                "/photonics/rendering/frag/common.glsl"
+        ));
+        assertTrue(source.contains("smple.is_hand"));
+        assertTrue(source.contains("center_sample.is_hand"));
+        assertTrue(source.contains(
+                "//ph_required: uniform int atrous_iteration;"
+        ));
         assertTrue(source.contains(
                 "//ph_required: uniform float near, far;"
         ));
-        assertFalse(source.contains("//ph_Required:"));
-        assertTrue(
-                passWeight > setup && handUse > setup,
-                "frag_is_hand must not read the global FragData before " +
-                        "setup_frag_data() has initialized it"
-        );
+        assertTrue(prefilter.contains("smple.is_hand = frag_is_hand;"));
+        assertTrue(common.contains("value.y & ~SVGF_HAND_BIT"));
+        assertTrue(common.contains("value.y & SVGF_HAND_BIT"));
+        assertTrue(common.contains(
+                "smple.is_hand ? SVGF_HAND_BIT : 0u"
+        ));
+        assertFalse(common.contains("value.x & ~SVGF_HAND_BIT"));
+    }
+
+    @Test
+    void denoiserSeparatesRequestedPassesFromMandatoryHandPasses()
+            throws IOException {
+        Path repositoryRoot = findRepositoryRoot();
+        String defines = Files.readString(repositoryRoot.resolve(
+                "modules/core/src/main/java/at/redi2go/photonics/core/" +
+                        "iris/IrisDefines.java"
+        ));
+        String pipeline = Files.readString(repositoryRoot.resolve(
+                "modules/core/src/main/java/at/redi2go/photonics/core/" +
+                        "iris/extensions/RestirPipeline.java"
+        ));
+        String properties = Files.readString(repositoryRoot.resolve(
+                "modules/versions/1_21_11/common/src/main/mixins/" +
+                        "at/redi2go/photonics/common/mixins/iris/" +
+                        "ShaderPropertiesMixin.java"
+        ));
+
+        assertTrue(defines.contains(
+                "\"PH_RESTIR_DENOISER_PASSES\",\n" +
+                        "                requestedDenoiserPasses\n"
+        ));
+        assertFalse(defines.contains(
+                "Math.max(requestedDenoiserPasses, 7)"
+        ));
+        assertTrue(pipeline.contains(
+                "Math.max(requestedDenoiserPasses, 7)"
+        ));
+        assertTrue(properties.contains(
+                "e -> phProperties.restirDenoiserPasses = e"
+        ));
+        assertFalse(properties.contains(
+                "e == 0 ? 0 : Math.max(e, 7)"
+        ));
+    }
+
+    @Test
+    void svgfUsesPlaneConsistentNormalizedHistoryAndVariance()
+            throws IOException {
+        Path shaderRoot = findShaderRoot();
+        String history = Files.readString(shaderRoot.resolve(RESTIR_SHADER));
+        String denoising = Files.readString(shaderRoot.resolve(
+                DENOISING_SHADER
+        ));
+
+        assertTrue(history.contains(
+                "abs(dot(distance_from_plane, frag_geo_normal)) > 0.25f"
+        ));
+        assertTrue(history.contains("if (!sample_history_is_valid(history))"));
+        assertTrue(history.contains("weight_sum += weight;"));
+        assertTrue(history.contains("smple.lighting /= weight_sum;"));
+        assertTrue(history.contains("smple.variance /= weight_sum;"));
+        assertFalse(history.contains("block_divsor"));
+
+        assertTrue(denoising.contains(
+                "center_sample.variance = mix("
+        ));
+        assertTrue(denoising.contains(
+                "return clamp(1.0f - (smple.age / pass_cutoff), " +
+                        "0.0f, 1.0f);"
+        ));
+        assertFalse(denoising.contains("const float phi_luminance"));
     }
 
     private static Path findShaderRoot() {

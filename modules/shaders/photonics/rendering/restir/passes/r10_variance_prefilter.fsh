@@ -16,6 +16,7 @@ void main() {
     if (frag_is_in_world) {
         smple.depth = texelFetch(depthtex0, SVGF_DEPTH_MODIFIER(frag_tex_coord), 0).r;
         smple.packed_normal = frag_is_hand ? _frag_data.data1.y : _frag_data.data1.z;
+        smple.is_hand = frag_is_hand;
 
         vec4 center = texelFetch(restir_lighting, frag_tex_coord, 0);
         vec3 maxNeighbour = vec3(0.0f);

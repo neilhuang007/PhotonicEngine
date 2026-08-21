@@ -3,8 +3,6 @@
 //ph_required: uniform int atrous_iteration;
 //ph_required: uniform float near, far;
 
-#include "/photonics/rendering/frag/common.glsl"
-#include "/photonics/rendering/restir/restir.glsl"
 #include "/photonics/rendering/restir/svgf.glsl"
 
 #include "/photonics/utility/color.glsl"
@@ -12,19 +10,19 @@
 layout(location = 0) out uvec4 denoise_out;
 
 float get_pass_weight(SvgfSample smple) {
-    const float frame_cutoff = PH_RESTIR_ACCUMULATION_FRAMES * 0.33f;
-    if (frag_is_hand || atrous_iteration < PH_RESTIR_DENOISER_PASSES) return 1.0f;
+    const float pass_cutoff = PH_RESTIR_ACCUMULATION_FRAMES * 0.5f;
+    if (smple.is_hand || atrous_iteration < PH_RESTIR_DENOISER_PASSES) return 1.0f;
 
-    return 1.0f - (smple.age / frame_cutoff);
+    return clamp(1.0f - (smple.age / pass_cutoff), 0.0f, 1.0f);
 }
 
 void main() {
-    setup_frag_data(0);
+    ivec2 texel = ivec2(gl_FragCoord.xy);
 
     SvgfSample center_sample = svgf_sample_empty();
-    svgf_sample_load(center_sample, frag_tex_coord);
+    svgf_sample_load(center_sample, texel);
 
-    if (center_sample.depth == 1.0f) {
+    if (center_sample.depth >= 1.0f) {
         denoise_out = uvec4(0u);
         return;
     }
@@ -45,9 +43,10 @@ void main() {
         int step_width = 1 << atrous_iteration;
 
         const float phi_depth = 0.5f;
-        float phi_luminance = 6.0f * sqrt(max(0.0f, V0)) + 1e-10;
+        float phi_luminance =
+                6.0f * sqrt(max(0.0f, V0 + 1e-10f));
         for (int i = 0; i < 9; ++i) {
-            ivec2 p = frag_tex_coord + step_width * offset[i];
+            ivec2 p = texel + step_width * offset[i];
 
             SvgfSample sample_data = svgf_sample_empty();
             svgf_sample_load(sample_data, p);
@@ -61,7 +60,13 @@ void main() {
             const float k = kernel[i];
 
             // Color (luminance) weight
-            float wC = frag_is_hand ? 1.0f : svgf_luma_edge_stopping_weight(L0, Li, phi_luminance);
+            float wC = center_sample.is_hand
+                    ? 1.0f
+                    : svgf_luma_edge_stopping_weight(
+                            L0,
+                            Li,
+                            phi_luminance
+                    );
 
             // Normal weight
             float wN = svgf_normal_edge_stopping_weight(N0, Ni);
@@ -79,7 +84,11 @@ void main() {
         V_sum = max(0.0001f, V_sum);
 
         center_sample.color = mix(center_sample.color, C_sum / W_sum, pass_weight);
-        center_sample.variance = max(V_sum / (W_sum * W_sum), 0.0f);
+        center_sample.variance = mix(
+                center_sample.variance,
+                max(V_sum / (W_sum * W_sum), 0.0f),
+                pass_weight
+        );
     }
 
     svgf_sample_encode(center_sample, denoise_out);

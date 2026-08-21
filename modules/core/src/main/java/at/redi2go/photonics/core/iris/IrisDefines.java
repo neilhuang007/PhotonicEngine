@@ -65,7 +65,7 @@ public class IrisDefines {
         int requestedDenoiserPasses = phProperties.getRestirDenoiserPasses();
         defines.intDefine(
                 "PH_RESTIR_DENOISER_PASSES",
-                requestedDenoiserPasses == 0 ? 0 : Math.max(requestedDenoiserPasses, 7)
+                requestedDenoiserPasses
         );
 
         if (phProperties.useRestirSoftShadows())

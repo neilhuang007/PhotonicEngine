@@ -99,7 +99,7 @@ public abstract class ShaderPropertiesMixin {
                 key,
                 value,
                 RESTIR_DENOISER_PASSES_KEY,
-                e -> phProperties.restirDenoiserPasses = e == 0 ? 0 : Math.max(e, 7)
+                e -> phProperties.restirDenoiserPasses = e
         );
         handleBooleanDirective(key, value, RESTIR_SOFT_SHADOWS_KEY, e -> phProperties.restirSoftShadows = e);
         handleBooleanDirective(key, value, RESTIR_COMBINED_GI_KEY, e -> phProperties.restirCombinedGi = e);
