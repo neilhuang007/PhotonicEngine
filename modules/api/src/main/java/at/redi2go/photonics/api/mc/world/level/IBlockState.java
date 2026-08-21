@@ -4,6 +4,8 @@ import at.redi2go.photonics.api.mc.IProperty;
 import at.redi2go.photonics.api.mc.core.IBlockPos;
 
 public interface IBlockState {
+    int ph$stateId();
+
     IBlock ph$block();
 
     default boolean ph$is(IBlock block) {

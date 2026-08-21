@@ -77,13 +77,9 @@ bool direct_reservoir_stream_sample(
 }
 
 float direct_reservoir_compute_ucw(DirectReservoir reservoir) {
-    if (!(reservoir.target_pdf > 0.0f) ||
-            !direct_reservoir_is_valid_measure(reservoir.weight_sum)) {
-        return 0.0f;
-    }
-    return direct_reservoir_sanitize_weight(
-        reservoir.weight_sum / reservoir.target_pdf
-    );
+    return reservoir.target_pdf == 0.0f
+            ? 0.0f
+            : reservoir.weight_sum / reservoir.target_pdf;
 }
 
 void direct_reservoir_finalize_initial_candidate(
@@ -104,26 +100,17 @@ bool direct_reservoir_add_sample(
     float jacobian,
     float random
 ) {
-    float target_pdf = direct_reservoir_sanitize_weight(shifted_target_pdf);
-    float weight = direct_reservoir_sanitize_weight(
-        direct_reservoir_sanitize_weight(mis_weight) *
-                target_pdf *
-                direct_reservoir_compute_ucw(other) *
-                direct_reservoir_sanitize_weight(jacobian)
-    );
-    result.weight_sum = direct_reservoir_sanitize_weight(
-        result.weight_sum + weight
-    );
+    float weight = mis_weight * shifted_target_pdf *
+            direct_reservoir_compute_ucw(other) * jacobian;
+    result.weight_sum += weight;
     result.total_samples = min(
-        result.total_samples + direct_reservoir_sanitize_weight(
-            other.total_samples
-        ),
+        result.total_samples + other.total_samples,
         max_direct_temporal_samples
     );
 
     if (random * result.weight_sum < weight) {
         result.smple = shifted_sample;
-        result.target_pdf = target_pdf;
+        result.target_pdf = shifted_target_pdf;
         return true;
     }
 
@@ -200,23 +187,23 @@ vec3 direct_reservoir_get_final_color(
 
 void direct_reservoir_encode(
     DirectReservoir reservoir,
-    out uvec2 sample_data,
+    out uvec3 sample_data,
     out vec3 reservoir_data
 );
 void direct_reservoir_decode(
     out DirectReservoir reservoir,
-    uvec2 sample_data,
+    uvec3 sample_data,
     vec3 reservoir_data
 );
 bool direct_reservoir_is_finite(DirectReservoir reservoir);
 
 uvec4 direct_reservoir_encode_candidate(DirectReservoir reservoir) {
-    uvec2 sample_data;
+    uvec3 sample_data;
     vec3 reservoir_data;
     direct_reservoir_encode(reservoir, sample_data, reservoir_data);
     return uvec4(
         sample_data,
-        floatBitsToUint(reservoir_data.xy)
+        floatBitsToUint(reservoir_data.x)
     );
 }
 
@@ -226,8 +213,9 @@ void direct_reservoir_decode_candidate(
 ) {
     direct_reservoir_decode(
         reservoir,
-        data.xy,
-        vec3(uintBitsToFloat(data.zw), 1.0f)
+        data.xyz,
+        // The receiver evaluates the selected sample's target before reuse.
+        vec3(uintBitsToFloat(data.w), 0.0f, 1.0f)
     );
 }
 
@@ -248,24 +236,14 @@ bool direct_reservoir_load_candidate(
 
 void direct_reservoir_encode(
     DirectReservoir reservoir,
-    out uvec2 sample_data,
+    out uvec3 sample_data,
     out vec3 reservoir_data
 ) {
-    sample_data = uvec2(0u);
+    sample_data = uvec3(0u);
     if (!direct_sample_is_empty(reservoir.smple)) {
         sample_data.x = uint(reservoir.smple.light_index) |
                 direct_reservoir_light_valid_bit;
-        sample_data.y = uint(clamp(
-            reservoir.smple.uv.x,
-            0.0f,
-            1.0f
-        ) * 65535.0f) | (
-            uint(clamp(
-                reservoir.smple.uv.y,
-                0.0f,
-                1.0f
-            ) * 65535.0f) << 16u
-        );
+        sample_data.yz = floatBitsToUint(reservoir.smple.uv);
     }
 
     reservoir_data = vec3(
@@ -277,7 +255,7 @@ void direct_reservoir_encode(
 
 void direct_reservoir_decode(
     out DirectReservoir reservoir,
-    uvec2 sample_data,
+    uvec3 sample_data,
     vec3 reservoir_data
 ) {
     reservoir.smple = direct_sample_empty();
@@ -285,10 +263,7 @@ void direct_reservoir_decode(
         reservoir.smple.light_index = int(
             sample_data.x & direct_reservoir_light_index_mask
         );
-        reservoir.smple.uv = vec2(
-            sample_data.y & 0xffffu,
-            sample_data.y >> 16u
-        ) / 65535.0f;
+        reservoir.smple.uv = uintBitsToFloat(sample_data.yz);
     }
 
     reservoir.weight_sum = reservoir_data.x;
@@ -307,7 +282,7 @@ bool direct_reservoir_is_finite(DirectReservoir reservoir) {
 bool direct_reservoir_load(out DirectReservoir reservoir, ivec2 tex_coord) {
     direct_reservoir_decode(
         reservoir,
-        texelFetch(restir_direct_reservoirs0, tex_coord, 0).rg,
+        texelFetch(restir_direct_reservoirs0, tex_coord, 0).rgb,
         texelFetch(restir_direct_reservoirs1, tex_coord, 0).rgb
     );
 
@@ -321,7 +296,7 @@ bool direct_reservoir_load(out DirectReservoir reservoir, ivec2 tex_coord) {
 bool direct_reservoir_load_previous(out DirectReservoir reservoir, ivec2 tex_coord, bool reprojected) {
     direct_reservoir_decode(
         reservoir,
-        texelFetch(prev_restir_direct_reservoirs0, tex_coord, 0).rg,
+        texelFetch(prev_restir_direct_reservoirs0, tex_coord, 0).rgb,
         texelFetch(prev_restir_direct_reservoirs1, tex_coord, 0).rgb
     );
 

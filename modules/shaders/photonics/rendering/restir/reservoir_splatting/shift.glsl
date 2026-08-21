@@ -154,16 +154,12 @@ bool direct_splat_camera_sees_primary(
         camera_rt_pos += previousCameraPosition - cameraPosition;
     }
 
-    vec3 primary_rt_pos = direct_reconnection_visibility_target(reconnection);
-    vec3 unused_tint;
-    float unused_transmittance;
-    return trace_light_vis(
+    vec3 primary_rt_pos = direct_reconnection_primary_rt_pos(reconnection);
+    return trace_segment_visibility(
         camera_rt_pos,
-        primary_rt_pos - camera_rt_pos,
         primary_rt_pos,
-        100,
-        unused_tint,
-        unused_transmittance
+        0.001f,
+        100
     );
 }
 
@@ -236,11 +232,10 @@ bool direct_splat_shift_primary(
 }
 
 // Complete retained-path shift for the static, pinhole, finite block-light
-// specialization used by Minecraft. A valid temporal history guarantees that
-// block geometry and the light list have not changed. The mapped DirectSample
-// therefore identifies the target-domain light vertex; general animated path
-// suffixes would require historical light/path state that this representation
-// intentionally does not claim to support.
+// specialization used by Minecraft. The mapped DirectSample identifies the
+// retained light vertex while the primary/light path is reprojected and
+// re-evaluated before reuse. The renderer additionally invalidates history
+// whenever the GPU-visible world or light-list generations change.
 bool direct_splat_shift_and_evaluate_retained_path(
     DirectSample target_sample,
     DirectReconnection source_reconnection,

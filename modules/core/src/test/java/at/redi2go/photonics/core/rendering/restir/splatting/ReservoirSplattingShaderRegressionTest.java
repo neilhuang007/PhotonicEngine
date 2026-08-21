@@ -47,6 +47,8 @@ class ReservoirSplattingShaderRegressionTest {
             "rendering/restir/reservoir_splatting/passes/p1_reproject.csh";
     private static final String FRAG_COMMON_SHADER =
             "rendering/frag/common.glsl";
+    private static final String TRACING_SIMPLE_SHADER =
+            "internal/tracing/simple.glsl";
 
     private static final Pattern INCLUDE =
             Pattern.compile("#include\\s+\"/photonics/([^\"]+)\"");
@@ -98,23 +100,54 @@ class ReservoirSplattingShaderRegressionTest {
     }
 
     @Test
-    void reconnectionGeometryNormalIsDeclaredBeforeItsFirstUse()
+    void primaryHitVisibilityUsesFalcorBoundedShapeTraversal()
             throws IOException {
-        String source = Files.readString(findShaderRoot().resolve(
+        Path shaderRoot = findShaderRoot();
+        String reconnection = Files.readString(shaderRoot.resolve(
                 RECONNECTION_SHADER
         ));
-        int declaration = source.indexOf(
-                "vec3 direct_reconnection_geo_normal("
-        );
-        int visibilityTarget = source.indexOf(
-                "vec3 direct_reconnection_visibility_target("
-        );
+        String reproject = Files.readString(shaderRoot.resolve(
+                REPROJECT_SHADER
+        ));
+        String shift = Files.readString(shaderRoot.resolve(SHIFT_SHADER));
+        String tracing = Files.readString(shaderRoot.resolve(
+                TRACING_SIMPLE_SHADER
+        ));
+        String segmentTrace = tracing.substring(tracing.indexOf(
+                "bool trace_segment_visibility("
+        ));
 
-        assertTrue(declaration >= 0, "geometry-normal helper is missing");
-        assertTrue(visibilityTarget >= 0, "visibility-target helper is missing");
-        assertTrue(
-                declaration < visibilityTarget,
-                "geometry-normal helper must be declared before it is called"
+        assertTrue(reconnection.contains(
+                "vec3 direct_reconnection_primary_rt_pos("
+        ));
+        assertTrue(reconnection.contains(
+                "return reconnection.player_pos + rt_camera_position;"
+        ));
+        assertFalse(
+                reconnection.contains("direct_reconnection_visibility_target("),
+                "the retained surface must not be replaced by a block-interior target"
+        );
+        assertTrue(reproject.contains("return trace_segment_visibility("));
+        assertTrue(reproject.contains("0.001f * primary_distance"));
+        assertTrue(shift.contains("return trace_segment_visibility("));
+        assertTrue(shift.contains("0.001f,"));
+        assertTrue(segmentTrace.contains(
+                "float maximum_hit_distance = 0.999f * target_distance;"
+        ));
+        assertTrue(segmentTrace.contains("RayResult result = ray_iter_next(ray);"));
+        assertFalse(
+                segmentTrace.contains("ray_iter_next_block("),
+                "primary visibility must resolve partial-block geometry"
+        );
+        assertTrue(segmentTrace.contains(
+                "rt_pos + ray_direction * minimum_hit_distance"
+        ));
+        assertTrue(segmentTrace.contains(
+                "traversed_distance >= maximum_hit_distance"
+        ));
+        assertFalse(
+                segmentTrace.contains("ray_iter_skip_transparent("),
+                "Falcor primary visibility treats committed geometry as opaque"
         );
     }
 
@@ -139,7 +172,8 @@ class ReservoirSplattingShaderRegressionTest {
     }
 
     @Test
-    void candidateSampleBitsUseIntegerTextureLanes() throws IOException {
+    void directSampleUvUsesFullPrecisionIntegerTextureLanes()
+            throws IOException {
         Path root = findRepositoryRoot();
         String pipeline = Files.readString(root.resolve(
                 "modules/core/src/main/java/at/redi2go/photonics/core/" +
@@ -151,9 +185,18 @@ class ReservoirSplattingShaderRegressionTest {
         String initial = Files.readString(findShaderRoot().resolve(
                 INITIAL_DIRECT_SHADER
         ));
+        String reproject = Files.readString(findShaderRoot().resolve(
+                REPROJECT_PASS_SHADER
+        ));
+        String temporal = Files.readString(findShaderRoot().resolve(
+                TEMPORAL_REUSE_SHADER
+        ));
 
         assertTrue(pipeline.contains(
                 "\"restir_direct_candidates\", ITextureFormat.rgba32ui()"
+        ));
+        assertTrue(pipeline.contains(
+                "\"restir_direct_reservoirs0\", ITextureFormat.rgb32ui()"
         ));
         assertTrue(reservoir.contains(
                 "uniform usampler2D restir_direct_candidates"
@@ -161,30 +204,112 @@ class ReservoirSplattingShaderRegressionTest {
         assertTrue(reservoir.contains(
                 "uvec4 direct_reservoir_encode_candidate("
         ));
+        assertTrue(reservoir.contains(
+                "floatBitsToUint(reservoir_data.x)"
+        ));
+        assertTrue(reservoir.contains(
+                "data.xyz"
+        ));
+        assertTrue(reservoir.contains(
+                "out uvec3 sample_data"
+        ));
+        assertTrue(reservoir.contains(
+                "sample_data.yz = floatBitsToUint(reservoir.smple.uv)"
+        ));
+        assertTrue(reservoir.contains(
+                "reservoir.smple.uv = uintBitsToFloat(sample_data.yz)"
+        ));
+        assertTrue(reservoir.contains(
+                "texelFetch(restir_direct_reservoirs0, tex_coord, 0).rgb"
+        ));
+        assertTrue(reservoir.contains(
+                "texelFetch(prev_restir_direct_reservoirs0, tex_coord, 0).rgb"
+        ));
+        assertTrue(reproject.contains(
+                "uvec3 previous_sample_data"
+        ));
+        int candidateLoad = temporal.indexOf(
+                "direct_reservoir_load_candidate("
+        );
+        int targetEvaluation = temporal.indexOf(
+                "direct_splat_initialize_path_data(",
+                candidateLoad
+        );
+        int targetAssignment = temporal.indexOf(
+                "current_reservoir.target_pdf = current_target;",
+                targetEvaluation
+        );
+        assertTrue(
+                candidateLoad >= 0 &&
+                        targetEvaluation > candidateLoad &&
+                        targetAssignment > targetEvaluation,
+                "the candidate target omitted from the integer attachment " +
+                        "must be evaluated before reuse"
+        );
         assertTrue(initial.contains(
                 "out uvec4 direct_candidate;"
         ));
         assertFalse(
-                reservoir.contains("uintBitsToFloat(sample_data"),
-                "arbitrary UV/sample bit patterns must not pass through a " +
-                        "floating-point render target where NaN payloads may " +
-                        "be canonicalized"
+                reservoir.contains("65535.0f") ||
+                        reservoir.contains("0xffffu"),
+                "sample UV must not be quantized to packed unorm16 lanes"
         );
+
+        for (String pass : new String[]{
+                "rendering/restir/passes/r3_validate_initial_direct.fsh",
+                TEMPORAL_REUSE_PASS_SHADER,
+                SPATIAL_REUSE_SHADER,
+                RESOLVE_SHADER
+        }) {
+            String source = Files.readString(findShaderRoot().resolve(pass));
+            assertTrue(
+                    source.contains("out uvec3 di_reservoir_0;"),
+                    pass + " must persist both full-precision UV lanes"
+            );
+        }
     }
 
     @Test
-    void reservoirMergeRejectsInvalidMeasures() throws IOException {
-        String source = Files.readString(findShaderRoot().resolve(
+    void scatterOnlyKeepsOnlyFalcorTargetedNanFallbacks()
+            throws IOException {
+        String reservoir = Files.readString(findShaderRoot().resolve(
                 DIRECT_RESERVOIR_SHADER
         ));
+        String temporal = Files.readString(findShaderRoot().resolve(
+                TEMPORAL_REUSE_SHADER
+        ));
+        int addStart = reservoir.indexOf(
+                "bool direct_reservoir_add_sample("
+        );
+        int addEnd = reservoir.indexOf(
+                "bool direct_reservoir_merge(",
+                addStart
+        );
+        String addSample = reservoir.substring(addStart, addEnd);
 
-        assertTrue(
-                source.contains("direct_reservoir_is_valid_measure("),
-                "reservoir measures need one shared finite, non-negative check"
+        assertFalse(
+                addSample.contains("direct_reservoir_sanitize_weight("),
+                "Falcor streams the shifted operands without generic sanitation"
+        );
+        assertFalse(
+                temporal.contains("direct_reservoir_sanitize_weight("),
+                "ScatterOnly has two targeted NaN fallbacks, not generic operand sanitation"
         );
         assertTrue(
-                source.contains("direct_reservoir_sanitize_weight("),
-                "NaN, infinity, and negative shifted weights must contribute zero"
+                temporal.contains("m2 = isnan(m2) ? 0.0f : m2;"),
+                "the reverse-shift measure uses Falcor's targeted NaN fallback"
+        );
+        assertTrue(
+                temporal.contains("bool m1_is_nan = isnan(m1);"),
+                "the contributor shift must test its combined measure once"
+        );
+        assertTrue(
+                temporal.contains("shifted_target = m1_is_nan ? 0.0f : shifted_target;"),
+                "a NaN contributor measure must zero only the shifted integrand"
+        );
+        assertTrue(
+                temporal.contains("shifted_jacobian = m1_is_nan ? 1.0f : shifted_jacobian;"),
+                "a NaN contributor measure must use Falcor's unit-Jacobian fallback"
         );
     }
 
@@ -397,7 +522,7 @@ class ReservoirSplattingShaderRegressionTest {
             throws IOException {
         String source = Files.readString(findShaderRoot().resolve(
                 "rendering/restir/reservoir_splatting/shift.glsl"
-        ));
+        )).replace("\r\n", "\n");
 
         assertTrue(source.contains(
                 "bool visible = direct_sample_get_visible_color_at_position("
@@ -417,7 +542,7 @@ class ReservoirSplattingShaderRegressionTest {
     void fragmentPassesUseIndependentRandomStreams() throws IOException {
         String source = Files.readString(findShaderRoot().resolve(
                 FRAG_COMMON_SHADER
-        ));
+        )).replace("\r\n", "\n");
 
         assertTrue(source.contains("frameCounter,\n        rnd_seed"));
         assertFalse(source.contains(
@@ -430,7 +555,7 @@ class ReservoirSplattingShaderRegressionTest {
             throws IOException {
         String source = Files.readString(findShaderRoot().resolve(
                 TEMPORAL_REUSE_SHADER
-        ));
+        )).replace("\r\n", "\n");
 
         assertTrue(source.contains(
                 "direct_splat_project_primary_unchecked(\n" +
@@ -551,7 +676,7 @@ class ReservoirSplattingShaderRegressionTest {
         );
         assertTrue(
                 temporal.contains(
-                        "reverse_target * reverse_jacobian *"
+                        "m2 = reverse_target * reverse_jacobian;"
                 ),
                 "canonical MIS must use the reverse-evaluated target"
         );
@@ -561,10 +686,11 @@ class ReservoirSplattingShaderRegressionTest {
         );
         assertTrue(
                 compactTemporal.contains(
-                        "floatshifted_measure=shifted_target*" +
-                                "shifted_jacobian;"
+                        "floatm1=shifted_target*shifted_jacobian*" +
+                                "current_reservoir.total_samples;"
                 ),
-                "Eq. 11's current-domain competitor uses shifted p-hat times J"
+                "Eq. 11's current-domain competitor uses shifted p-hat, J, " +
+                        "and current confidence"
         );
         assertTrue(
                 compactTemporal.contains(
@@ -603,9 +729,14 @@ class ReservoirSplattingShaderRegressionTest {
                         "at/redi2go/photonics/client/" +
                         "ShaderGameTestReporter.java"
         );
-        String source = Files.readString(reporter);
+        String source = Files.readString(reporter)
+                .replace("\r\n", "\n");
 
         assertTrue(source.contains("restir_direct_reservoirs1"));
+        assertTrue(source.contains(
+                "MIN_RESERVOIR_POSITIVE_TARGET_FRACTION"
+        ));
+        assertTrue(source.contains("positiveTargetReservoirFraction"));
         assertTrue(source.contains("meanPositiveTargetConfidence"));
         assertTrue(source.contains("confidenceCapViolationCount"));
         assertTrue(source.contains("relativeFrameLuminanceStdDev"));
@@ -614,6 +745,9 @@ class ReservoirSplattingShaderRegressionTest {
         assertTrue(source.contains("TEST_SIMULATION_DISTANCE = 5"));
         assertTrue(source.contains(
                 "reservoir.positiveTargetReservoirCount == 0"
+        ));
+        assertTrue(source.contains(
+                "direct-reservoir coverage is still sparse"
         ));
         assertTrue(source.contains(
                 "reservoir.meanPositiveTargetConfidence\n" +
@@ -626,6 +760,11 @@ class ReservoirSplattingShaderRegressionTest {
         ));
         assertTrue(source.contains(
                 "activeReadiness.shouldCapture(lighting, reservoir)"
+        ));
+        assertTrue(source.contains(
+                "activeFrames.clear();\n" +
+                        "                    activeLightingFrames.clear();\n" +
+                        "                    activeReservoirFrames.clear();"
         ));
         assertTrue(source.contains(
                 "lightingStabilityFailure(\n" +

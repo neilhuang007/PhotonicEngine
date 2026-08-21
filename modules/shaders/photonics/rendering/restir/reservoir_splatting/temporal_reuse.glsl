@@ -13,10 +13,8 @@ bool direct_splat_history_is_valid() {
 }
 
 float direct_splat_balance_heuristic(float numerator, float competing) {
-    numerator = direct_reservoir_sanitize_weight(numerator);
-    competing = direct_reservoir_sanitize_weight(competing);
     float denominator = numerator + competing;
-    return denominator > 0.0f
+    return denominator != 0.0f
             ? numerator / denominator
             : 0.0f;
 }
@@ -24,7 +22,7 @@ float direct_splat_balance_heuristic(float numerator, float competing) {
 float direct_splat_previous_confidence(ivec2 pixel) {
     DirectReservoir reservoir;
     direct_reservoir_load_previous(reservoir, pixel, false);
-    return direct_reservoir_sanitize_weight(reservoir.total_samples);
+    return reservoir.total_samples;
 }
 
 float direct_splat_update_confidence(
@@ -104,10 +102,8 @@ void direct_splat_temporal_reuse(
 
     float current_mis = 1.0f;
     if (current_reservoir.target_pdf > 0.0f) {
-        float m1 = direct_reservoir_sanitize_weight(
-            current_reservoir.target_pdf *
-                    current_reservoir.total_samples
-        );
+        float m1 = current_reservoir.target_pdf *
+                current_reservoir.total_samples;
         float m2 = 0.0f;
         DirectReconnection reverse_reconnection;
         vec2 reverse_fractional_pixel;
@@ -123,12 +119,11 @@ void direct_splat_temporal_reuse(
                     reverse_fractional_pixel,
                     reverse_target,
                     reverse_jacobian
-                )) {
+            )) {
             ivec2 reverse_pixel = ivec2(floor(reverse_fractional_pixel));
-            m2 = direct_reservoir_sanitize_weight(
-                reverse_target * reverse_jacobian *
-                        direct_splat_previous_confidence(reverse_pixel)
-            );
+            m2 = reverse_target * reverse_jacobian;
+            m2 = isnan(m2) ? 0.0f : m2;
+            m2 *= direct_splat_previous_confidence(reverse_pixel);
         }
         current_mis = direct_splat_balance_heuristic(m1, m2);
     }
@@ -177,21 +172,13 @@ void direct_splat_temporal_reuse(
                     shifted_target,
                     shifted_jacobian
             )) {
-                float shifted_measure = shifted_target * shifted_jacobian;
-                float m1;
-                if (!direct_reservoir_is_valid_measure(shifted_measure)) {
-                    shifted_target = 0.0f;
-                    shifted_jacobian = 1.0f;
-                    m1 = 0.0f;
-                } else {
-                    m1 = direct_reservoir_sanitize_weight(
-                        shifted_measure * current_reservoir.total_samples
-                    );
-                }
-                float m2 = direct_reservoir_sanitize_weight(
-                    previous_reservoir.target_pdf *
-                            previous_reservoir.total_samples
-                );
+                float m1 = shifted_target * shifted_jacobian *
+                        current_reservoir.total_samples;
+                bool m1_is_nan = isnan(m1);
+                shifted_target = m1_is_nan ? 0.0f : shifted_target;
+                shifted_jacobian = m1_is_nan ? 1.0f : shifted_jacobian;
+                float m2 = previous_reservoir.target_pdf *
+                        previous_reservoir.total_samples;
                 previous_mis = direct_splat_balance_heuristic(m2, m1);
             }
         }

@@ -76,7 +76,7 @@ final class ShaderGameTestReporter {
     private static final double MAX_CAMERA_CHROMATICITY_DISTANCE = 0.035;
     private static final double MAX_FRAME_CHROMATICITY_DISTANCE = 0.04;
     private static final double MIN_LIGHTING_MEAN_LUMINANCE = 1.0e-5;
-    private static final double MIN_LIGHTING_NONZERO_PIXEL_FRACTION = 0.01;
+    private static final double MIN_LIGHTING_NONZERO_PIXEL_FRACTION = 0.10;
     private static final double MIN_LIGHTING_FINITE_PIXEL_FRACTION = 1.0;
     private static final double MAX_LIGHTING_CAMERA_CHROMATICITY_DISTANCE = 0.035;
     private static final double MAX_LIGHTING_FRAME_CHROMATICITY_DISTANCE = 0.04;
@@ -92,6 +92,8 @@ final class ShaderGameTestReporter {
     private static final double MIN_STABLE_POSITIVE_TARGET_CONFIDENCE =
             FALCOR_CONFIDENCE_CAP - 1.0;
     private static final double MIN_RESERVOIR_FINITE_PIXEL_FRACTION = 1.0;
+    private static final double MIN_RESERVOIR_POSITIVE_TARGET_FRACTION =
+            0.08;
     private static final double MAX_RESERVOIR_CONFIDENCE =
             FALCOR_CONFIDENCE_CAP + 0.001;
 
@@ -317,6 +319,14 @@ final class ShaderGameTestReporter {
                         ? cameraBReadiness
                         : cameraAReadiness;
                 if (!activeReadiness.shouldCapture(lighting, reservoir)) {
+                    // A scene transition can begin after the first accepted
+                    // sample (for example while the voxel world finishes
+                    // streaming). Keep only one contiguous settled sequence;
+                    // otherwise one stale frame can poison an otherwise stable
+                    // aggregate without representing steady-state rendering.
+                    activeFrames.clear();
+                    activeLightingFrames.clear();
+                    activeReservoirFrames.clear();
                     return;
                 }
 
@@ -341,12 +351,12 @@ final class ShaderGameTestReporter {
             }
 
             finish(client, evaluateSuccess());
-        } catch (Throwable throwable) {
-            errors.add(throwable.getClass().getSimpleName()
-                    + ": " + String.valueOf(throwable.getMessage()));
+        } catch (Exception exception) {
+            errors.add(exception.getClass().getSimpleName()
+                    + ": " + String.valueOf(exception.getMessage()));
             Photonics.LOGGER.error(
                     "Shader game-test reporter failed while sampling",
-                    throwable
+                    exception
             );
             finish(client, false);
         }
@@ -358,10 +368,10 @@ final class ShaderGameTestReporter {
     ) {
         try (image) {
             target.add(FrameMetrics.from(image));
-        } catch (Throwable throwable) {
+        } catch (Exception exception) {
             errors.add("Framebuffer readback failed: "
-                    + throwable.getClass().getSimpleName()
-                    + ": " + String.valueOf(throwable.getMessage()));
+                    + exception.getClass().getSimpleName()
+                    + ": " + String.valueOf(exception.getMessage()));
         } finally {
             captureInFlight = false;
         }
@@ -430,6 +440,10 @@ final class ShaderGameTestReporter {
                 reservoirB.positiveTargetReservoirCount
         );
         boolean hasPositiveReservoirTargets = positiveTargetReservoirs > 0;
+        double minPositiveTargetFraction = Math.min(
+                reservoirA.positiveTargetReservoirFraction,
+                reservoirB.positiveTargetReservoirFraction
+        );
 
         return framebufferMeanLuminance >= MIN_MEAN_LUMINANCE
                 && framebufferMeanLuminance <= MAX_MEAN_LUMINANCE
@@ -458,6 +472,8 @@ final class ShaderGameTestReporter {
                 && reservoirB.meanFinitePixelFraction
                 >= MIN_RESERVOIR_FINITE_PIXEL_FRACTION
                 && hasPositiveReservoirTargets
+                && minPositiveTargetFraction
+                >= MIN_RESERVOIR_POSITIVE_TARGET_FRACTION
                 && meanPositiveTargetConfidence
                 >= MIN_STABLE_POSITIVE_TARGET_CONFIDENCE
                 && reservoirA.maxConfidence <= MAX_RESERVOIR_CONFIDENCE
@@ -487,6 +503,10 @@ final class ShaderGameTestReporter {
         }
         if (reservoir.positiveTargetReservoirCount == 0) {
             return "no positive direct-reservoir targets";
+        }
+        if (positiveTargetFraction(reservoir)
+                < MIN_RESERVOIR_POSITIVE_TARGET_FRACTION) {
+            return "direct-reservoir coverage is still sparse";
         }
         if (reservoir.meanPositiveTargetConfidence
                 < MIN_STABLE_POSITIVE_TARGET_CONFIDENCE) {
@@ -537,7 +557,7 @@ final class ShaderGameTestReporter {
                     success,
                     reportFile
             );
-        } catch (Throwable exception) {
+        } catch (Exception exception) {
             String finalizationError = "Report finalization failed: "
                     + exception.getClass().getSimpleName() + ": "
                     + String.valueOf(exception.getMessage());
@@ -555,7 +575,7 @@ final class ShaderGameTestReporter {
             fallback.put("errors", List.copyOf(errors));
             try {
                 writeAtomically(fallback);
-            } catch (Throwable writeException) {
+            } catch (Exception writeException) {
                 exception.addSuppressed(writeException);
                 Photonics.LOGGER.error(
                         "Could not write shader game-test completion report",
@@ -712,6 +732,13 @@ final class ShaderGameTestReporter {
         if (positiveTargets == 0) {
             return "Direct reservoirs contain no positive-target samples.";
         }
+        if (Math.min(
+                reservoirA.positiveTargetReservoirFraction,
+                reservoirB.positiveTargetReservoirFraction
+        ) < MIN_RESERVOIR_POSITIVE_TARGET_FRACTION) {
+            return "Direct reservoir coverage did not settle beyond sparse "
+                    + "warmup frames.";
+        }
         if (meanConfidence < MIN_STABLE_POSITIVE_TARGET_CONFIDENCE) {
             return "Direct reservoir confidence did not accumulate beyond "
                     + "the current-frame spatial baseline.";
@@ -799,6 +826,8 @@ final class ShaderGameTestReporter {
                 MIN_STABLE_POSITIVE_TARGET_CONFIDENCE);
         thresholds.put("minReservoirFinitePixelFraction",
                 MIN_RESERVOIR_FINITE_PIXEL_FRACTION);
+        thresholds.put("minReservoirPositiveTargetFraction",
+                MIN_RESERVOIR_POSITIVE_TARGET_FRACTION);
         thresholds.put("maxReservoirConfidence",
                 MAX_RESERVOIR_CONFIDENCE);
         metrics.put("thresholds", thresholds);
@@ -926,6 +955,9 @@ final class ShaderGameTestReporter {
             long positiveTargets = a.positiveTargetReservoirCount
                     + b.positiveTargetReservoirCount;
             reservoirs.put("positiveTargetReservoirCount", positiveTargets);
+            reservoirs.put("positiveTargetReservoirFraction",
+                    positiveTargetFraction(positiveTargets,
+                            a.sampledPixelCount + b.sampledPixelCount));
             reservoirs.put("meanPositiveTargetConfidence", weightedMean(
                     a.meanPositiveTargetConfidence,
                     a.positiveTargetReservoirCount,
@@ -965,6 +997,8 @@ final class ShaderGameTestReporter {
                     reservoir.finitePixelFraction);
             result.put("positiveTargetReservoirCount",
                     reservoir.positiveTargetReservoirCount);
+            result.put("positiveTargetReservoirFraction",
+                    positiveTargetFraction(reservoir));
             result.put("meanPositiveTargetConfidence",
                     reservoir.meanPositiveTargetConfidence);
             result.put("maxConfidence", reservoir.maxConfidence);
@@ -1100,8 +1134,12 @@ final class ShaderGameTestReporter {
         ));
         result.put("meanFinitePixelFraction",
                 aggregate.meanFinitePixelFraction);
+        result.put("meanSampledPixelCount",
+                aggregate.sampledPixelCount / (double) frames.size());
         result.put("positiveTargetReservoirCount",
                 aggregate.positiveTargetReservoirCount);
+        result.put("positiveTargetReservoirFraction",
+                aggregate.positiveTargetReservoirFraction);
         result.put("meanPositiveTargetConfidence",
                 aggregate.meanPositiveTargetConfidence);
         result.put("maxConfidence", aggregate.maxConfidence);
@@ -1109,8 +1147,11 @@ final class ShaderGameTestReporter {
                 aggregate.confidenceCapViolationCount);
         result.put("frames", frames.stream().map(frame -> Map.of(
                 "finitePixelFraction", frame.finitePixelFraction,
+                "sampledPixelCount", frame.sampledPixelCount,
                 "positiveTargetReservoirCount",
                 frame.positiveTargetReservoirCount,
+                "positiveTargetReservoirFraction",
+                positiveTargetFraction(frame),
                 "meanPositiveTargetConfidence",
                 frame.meanPositiveTargetConfidence,
                 "maxConfidence", frame.maxConfidence,
@@ -1393,6 +1434,23 @@ final class ShaderGameTestReporter {
         long count = firstCount + secondCount;
         if (count == 0) return 0.0;
         return (firstMean * firstCount + secondMean * secondCount) / count;
+    }
+
+    private static double positiveTargetFraction(
+            ReservoirFrameMetrics reservoir
+    ) {
+        return positiveTargetFraction(
+                reservoir.positiveTargetReservoirCount,
+                reservoir.sampledPixelCount
+        );
+    }
+
+    private static double positiveTargetFraction(
+            long positiveTargetReservoirCount,
+            long sampledPixelCount
+    ) {
+        if (sampledPixelCount == 0) return 0.0;
+        return positiveTargetReservoirCount / (double) sampledPixelCount;
     }
 
     private record CameraState(
@@ -1704,7 +1762,9 @@ final class ShaderGameTestReporter {
 
     private record ReservoirAggregateMetrics(
             double meanFinitePixelFraction,
+            long sampledPixelCount,
             long positiveTargetReservoirCount,
+            double positiveTargetReservoirFraction,
             double meanPositiveTargetConfidence,
             double maxConfidence,
             long confidenceCapViolationCount
@@ -1715,6 +1775,9 @@ final class ShaderGameTestReporter {
             long positiveTargets = frames.stream()
                     .mapToLong(ReservoirFrameMetrics
                             ::positiveTargetReservoirCount)
+                    .sum();
+            long sampledPixels = frames.stream()
+                    .mapToLong(ReservoirFrameMetrics::sampledPixelCount)
                     .sum();
             double confidenceSum = frames.stream()
                     .mapToDouble(frame ->
@@ -1727,7 +1790,9 @@ final class ShaderGameTestReporter {
                                     ::finitePixelFraction)
                             .average()
                             .orElse(0.0),
+                    sampledPixels,
                     positiveTargets,
+                    positiveTargetFraction(positiveTargets, sampledPixels),
                     positiveTargets == 0
                             ? 0.0
                             : confidenceSum / positiveTargets,

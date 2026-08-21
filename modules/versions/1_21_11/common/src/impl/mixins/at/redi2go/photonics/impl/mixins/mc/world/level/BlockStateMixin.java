@@ -21,6 +21,11 @@ import org.spongepowered.asm.mixin.Mixin;
 @SuppressWarnings("unchecked")
 public abstract class BlockStateMixin extends BlockBehaviour.BlockStateBase implements IBlockState {
     @Override
+    public int ph$stateId() {
+        return Block.getId((BlockState) (Object) this);
+    }
+
+    @Override
     public IBlock ph$block() {
         return (IBlock) getBlock();
     }

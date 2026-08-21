@@ -7,7 +7,6 @@ import at.redi2go.photonics.api.mc.world.level.chunk.IChunkSection;
 import at.redi2go.photonics.core.collect.EmptyQueue;
 import it.unimi.dsi.fastutil.Pair;
 import org.jetbrains.annotations.NonNls;
-import org.joml.Vector2i;
 import org.joml.Vector3i;
 
 import java.util.ArrayDeque;
@@ -30,7 +29,6 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.IntSupplier;
 
 public class SectionManager implements RenderingComponent {
-    private Set<Vector2i> loadedChunks = Set.of();
     private final Set<Vector3i> notEmptySections = ConcurrentHashMap.newKeySet();
 
     private final List<Queue<Vector3i>> unloadQueues = new ArrayList<>();
@@ -79,7 +77,6 @@ public class SectionManager implements RenderingComponent {
 
         if (rd == lastRenderDistance && Objects.equals(lastCameraPos, cameraPos)) return;
 
-        Set<Vector2i> discoveredChunks = new HashSet<>();
         Set<Vector3i> discoveredSections = new HashSet<>();
         Set<Vector3i> unloadedSections = new HashSet<>();
         List<Pair<Vector3i, SectionCopy>> sectionsToUpdate = new ArrayList<>();
@@ -88,8 +85,6 @@ public class SectionManager implements RenderingComponent {
             for (int pz = -rd; pz <= rd; pz++) {
                 int sectionX = cameraPos.x + px;
                 int sectionZ = cameraPos.z + pz;
-
-                discoveredChunks.add(new Vector2i(sectionX, sectionZ));
 
                 var chunk = level.ph$getChunkOrNull(sectionX, sectionZ);
                 if (chunk == null) continue;
@@ -124,8 +119,6 @@ public class SectionManager implements RenderingComponent {
         }
 
         notEmptySections.addAll(discoveredSections);
-
-        loadedChunks = discoveredChunks;
 
         lastCameraPos = cameraPos;
         lastRenderDistance = rd;
@@ -191,9 +184,11 @@ public class SectionManager implements RenderingComponent {
         if (level == null) return;
 
         try {
-            if (renderDistanceSupplier.getAsInt() != lastRenderDistance) {
-                refreshSections(level);
-            }
+            // refreshSections has its own camera-section/render-distance guard.
+            // Calling it every frame keeps the tracked volume synchronized when
+            // the camera crosses a section without relying on a Sodium rebuild
+            // event to happen afterward.
+            refreshSections(level);
         } catch (InterruptedException e) {
             throw new IllegalStateException(e);
         }
@@ -206,20 +201,47 @@ public class SectionManager implements RenderingComponent {
 
         try {
             refreshSections(level);
-            Vector3i sectionPos = new Vector3i(x, y, z);
-
-            if (!loadedChunks.contains(new Vector2i(x, z))) return;
-            if (notEmptySections.contains(sectionPos)) return;
-
-            var copyResult = createCopy(sectionPos, level);
-            if (copyResult.isEmpty()) return;
-
-            var section = copyResult.get();
-            notEmptySections.add(section.pos());
-            queueSection(section);
+            enqueueNewSection(level, new Vector3i(x, y, z));
         } catch (InterruptedException e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    private void enqueueNewSection(
+            ILevel level,
+            Vector3i sectionPos
+    ) throws InterruptedException {
+        if (!isInsideTrackedVolume(sectionPos)) return;
+        if (notEmptySections.contains(sectionPos)) return;
+
+        var copyResult = createCopy(sectionPos, level);
+        if (copyResult.isEmpty()) return;
+
+        var section = copyResult.get();
+        notEmptySections.add(section.pos());
+        queueSection(section);
+    }
+
+    private boolean isInsideTrackedVolume(Vector3i sectionPos) {
+        return lastCameraPos != null &&
+                isInsideRenderDistance(
+                        sectionPos,
+                        lastCameraPos,
+                        lastRenderDistance
+                );
+    }
+
+    static boolean isInsideRenderDistance(
+            Vector3i sectionPos,
+            Vector3i cameraSectionPos,
+            int renderDistance
+    ) {
+        return Math.abs(sectionPos.x - cameraSectionPos.x)
+                <= renderDistance &&
+                Math.abs(sectionPos.y - cameraSectionPos.y)
+                        <= renderDistance &&
+                Math.abs(sectionPos.z - cameraSectionPos.z)
+                        <= renderDistance;
     }
 
     @Override
@@ -228,9 +250,12 @@ public class SectionManager implements RenderingComponent {
         if (level == null) return;
 
         try {
+            refreshSections(level);
             Vector3i sectionPos = new Vector3i(x, y, z);
+            if (!isInsideTrackedVolume(sectionPos)) return;
+
             if (!notEmptySections.contains(sectionPos)) {
-                onSectionAdded(x, y, z);
+                enqueueNewSection(level, sectionPos);
                 return;
             }
 

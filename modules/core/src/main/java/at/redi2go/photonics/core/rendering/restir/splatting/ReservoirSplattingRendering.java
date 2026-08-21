@@ -178,10 +178,15 @@ public final class ReservoirSplattingRendering implements RenderingComponent {
         lastWorldContentGeneration = currentWorldContentGeneration;
         lastPreviousLightContentGeneration = previousLightContentGeneration;
         lastPreviousWorldContentGeneration = previousWorldContentGeneration;
+        // The retained samples refer to the exact GPU-visible world and light
+        // list from the previous frame. Neither buffer has a previous-state
+        // snapshot, so reuse is only valid while both generations are stable.
         historyValid = hasCompletedFrame &&
                 !resized &&
-                currentLightContentGeneration == previousLightContentGeneration &&
-                currentWorldContentGeneration == previousWorldContentGeneration;
+                currentLightContentGeneration ==
+                        previousLightContentGeneration &&
+                currentWorldContentGeneration ==
+                        previousWorldContentGeneration;
         hasCompletedFrame = true;
         previousLightContentGeneration = currentLightContentGeneration;
         previousWorldContentGeneration = currentWorldContentGeneration;

@@ -44,16 +44,13 @@ bool direct_splat_project_reconnection_to_current_frame(
 bool direct_splat_current_camera_sees_primary_hit(
     DirectReconnection reconnection
 ) {
-    vec3 primary_rt_pos = direct_reconnection_visibility_target(reconnection);
-    vec3 unused_tint;
-    float unused_transmittance;
-    return trace_light_vis(
+    vec3 primary_rt_pos = direct_reconnection_primary_rt_pos(reconnection);
+    float primary_distance = distance(rt_camera_position, primary_rt_pos);
+    return trace_segment_visibility(
         rt_camera_position,
-        primary_rt_pos - rt_camera_position,
         primary_rt_pos,
-        100,
-        unused_tint,
-        unused_transmittance
+        0.001f * primary_distance,
+        100
     );
 }
 
@@ -63,11 +60,11 @@ void main() {
     ivec2 source_pixel = ivec2(gl_GlobalInvocationID.xy);
     if (!ph_splat_pixel_in_bounds(source_pixel)) return;
 
-    uvec2 previous_sample_data = texelFetch(
+    uvec3 previous_sample_data = texelFetch(
         prev_restir_direct_reservoirs0,
         source_pixel,
         0
-    ).rg;
+    ).rgb;
     vec3 previous_reservoir_data = texelFetch(
         prev_restir_direct_reservoirs1,
         source_pixel,

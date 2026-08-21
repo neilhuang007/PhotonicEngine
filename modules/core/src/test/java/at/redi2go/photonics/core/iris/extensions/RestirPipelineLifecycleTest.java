@@ -106,7 +106,7 @@ class RestirPipelineLifecycleTest {
     }
 
     @Test
-    void sceneContentGenerationsInvalidateReservoirHistory()
+    void sceneStreamingInvalidatesReservoirHistoryWithoutSnapshots()
             throws IOException {
         Path root = findRepositoryRoot();
         String pipeline = Files.readString(root.resolve(
@@ -129,12 +129,29 @@ class RestirPipelineLifecycleTest {
 
         assertTrue(pipeline.contains("lightList::contentGeneration"));
         assertTrue(pipeline.contains("worldCompiler::contentGeneration"));
-        assertTrue(lifecycle.contains(
-                "currentLightContentGeneration == previousLightContentGeneration"
-        ));
-        assertTrue(lifecycle.contains(
-                "currentWorldContentGeneration == previousWorldContentGeneration"
-        ));
+        int historyValid = lifecycle.indexOf(
+                "historyValid = hasCompletedFrame &&"
+        );
+        assertTrue(
+                historyValid >= 0,
+                "ScatterOnly history must be guarded by the frame lifecycle"
+        );
+        int historyEnd = lifecycle.indexOf(';', historyValid);
+        String historyExpression = lifecycle.substring(historyValid, historyEnd);
+        assertTrue(
+                historyExpression.contains("currentLightContentGeneration") &&
+                        historyExpression.contains(
+                                "previousLightContentGeneration"
+                        ) &&
+                        historyExpression.contains(
+                                "currentWorldContentGeneration"
+                        ) &&
+                        historyExpression.contains(
+                                "previousWorldContentGeneration"
+                        ),
+                "history must be invalidated when either GPU-visible content " +
+                        "generation changes because no previous snapshot exists"
+        );
 
         int worldRegistration = extension.indexOf(
                 "worldCompiler = registerComponent("

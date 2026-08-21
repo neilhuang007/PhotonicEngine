@@ -1,5 +1,7 @@
 #version 430
 
+//ph_required: uniform sampler2D depthtex0;
+
 #include "/photonics/rendering/frag/world_interface.glsl"
 #include "/photonics/utility/normal_encoding.glsl"
 #include "/photonics/rendering/frag/frag_data.glsl"

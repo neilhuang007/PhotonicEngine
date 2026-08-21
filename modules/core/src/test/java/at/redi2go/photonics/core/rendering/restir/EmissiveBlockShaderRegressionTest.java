@@ -36,6 +36,14 @@ class EmissiveBlockShaderRegressionTest {
                 "packed normals and material flags must not cross a float " +
                         "attachment that can canonicalize NaN bit patterns"
         );
+        assertTrue(
+                fragLoad.contains(
+                        "//ph_required: uniform sampler2D depthtex0;"
+                ),
+                "the standalone fragment-data pass must request depthtex0 at " +
+                        "its compilation boundary instead of relying on an " +
+                        "included requirement comment"
+        );
     }
 
     @Test
@@ -120,6 +128,17 @@ class EmissiveBlockShaderRegressionTest {
     void transparentLightTargetTerminatesVisibilityRay() throws IOException {
         String tracing = readShader("internal/tracing/simple.glsl");
 
+        assertTrue(
+                tracing.contains(
+                        "vec3 ray_direction = direction * " +
+                                "inversesqrt(direction_length_squared);"
+                ) && tracing.contains(
+                        "ray_iter_begin(ray, rt_pos, ray_direction);"
+                ),
+                "visibility traversal and its post-transparency epsilon must " +
+                        "use a unit ray direction instead of scaling the " +
+                        "offset by the light distance"
+        );
         assertTrue(
                 tracing.contains(
                         "ray.iterations = min(ray.iterations, max_iterations);"
@@ -526,7 +545,8 @@ class EmissiveBlockShaderRegressionTest {
     }
 
     private static String readShader(String relativePath) throws IOException {
-        return Files.readString(findShaderRoot().resolve(relativePath));
+        return Files.readString(findShaderRoot().resolve(relativePath))
+                .replace("\r\n", "\n");
     }
 
     private static Path findShaderRoot() {

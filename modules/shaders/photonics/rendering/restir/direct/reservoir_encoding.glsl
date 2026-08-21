@@ -11,7 +11,7 @@ bool direct_reservoir_data_is_finite(vec3 reservoir_data) {
 }
 
 bool direct_reservoir_encoding_is_reusable(
-    uvec2 sample_data,
+    uvec3 sample_data,
     vec3 reservoir_data
 ) {
     return (sample_data.x & direct_reservoir_light_valid_bit) != 0u &&

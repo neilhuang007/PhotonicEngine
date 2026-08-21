@@ -3,7 +3,7 @@
 #include "/photonics/rendering/frag/common.glsl"
 #include "/photonics/rendering/restir/restir.glsl"
 
-layout(location = DIRECT_RESERVOIR_0) out uvec2 di_reservoir_0;
+layout(location = DIRECT_RESERVOIR_0) out uvec3 di_reservoir_0;
 layout(location = DIRECT_RESERVOIR_1) out vec3 di_reservoir_1;
 
 void main() {

@@ -11,8 +11,15 @@ bool trace_light_vis(
 
     if (max_iterations <= 0) return false;
 
+    float direction_length_squared = dot(direction, direction);
+    if (!(direction_length_squared > 0.0f) ||
+            isnan(direction_length_squared) ||
+            isinf(direction_length_squared)) return false;
+
+    vec3 ray_direction = direction * inversesqrt(direction_length_squared);
+
     RayIterator ray;
-    ray_iter_begin(ray, rt_pos, direction);
+    ray_iter_begin(ray, rt_pos, ray_direction);
     ray.iterations = min(ray.iterations, max_iterations);
 
     RayResult result = missed_ray_result();
@@ -50,4 +57,56 @@ bool trace_light_vis(
     tint_color = running_tint_color.a == 0.0f ? vec3(1.0f) : running_tint_color.rgb;
 
     return true;
+}
+
+bool trace_segment_visibility(
+    vec3 rt_pos,
+    vec3 target_rt_pos,
+    float minimum_hit_distance,
+    int max_iterations
+) {
+    if (max_iterations <= 0 ||
+            minimum_hit_distance < 0.0f ||
+            isnan(minimum_hit_distance) ||
+            isinf(minimum_hit_distance)) return false;
+
+    vec3 to_target = target_rt_pos - rt_pos;
+    float target_distance_squared = dot(to_target, to_target);
+    if (!(target_distance_squared > 0.0f) ||
+            isnan(target_distance_squared) ||
+            isinf(target_distance_squared)) return false;
+
+    float target_distance = sqrt(target_distance_squared);
+    vec3 ray_direction = to_target / target_distance;
+    float maximum_hit_distance = 0.999f * target_distance;
+    if (minimum_hit_distance >= maximum_hit_distance) return true;
+
+    RayIterator ray;
+    ray_iter_begin(
+        ray,
+        rt_pos + ray_direction * minimum_hit_distance,
+        ray_direction
+    );
+    ray.iterations = min(ray.iterations, max_iterations);
+
+    while (true) {
+        RayResult result = ray_iter_next(ray);
+        if (!ray_result_is_hit(result)) {
+            float traversed_distance = dot(
+                ray.position - rt_pos,
+                ray_direction
+            );
+            // Leaving the voxel world is a true miss. Exhausting the traversal
+            // budget is accepted only after the iterator crossed Falcor's tMax.
+            return !ray_iter_is_in_bounds(ray) ||
+                    traversed_distance >= maximum_hit_distance;
+        }
+
+        float hit_distance = dot(
+            ray_result_position(result) - rt_pos,
+            ray_direction
+        );
+        if (hit_distance >= maximum_hit_distance) return true;
+        return false;
+    }
 }

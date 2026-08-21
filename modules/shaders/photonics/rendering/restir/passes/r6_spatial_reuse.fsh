@@ -12,7 +12,7 @@
 #if defined PH_ENABLE_BLOCKLIGHT
 #include "/photonics/rendering/restir/reservoir_splatting/spatial_reuse.glsl"
 
-layout(location = DIRECT_RESERVOIR_0) out uvec2 di_reservoir_0;
+layout(location = DIRECT_RESERVOIR_0) out uvec3 di_reservoir_0;
 layout(location = DIRECT_RESERVOIR_1) out vec3 di_reservoir_1;
 #endif
 

@@ -19,8 +19,6 @@ import org.apache.logging.log4j.util.TriConsumer;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Vector3i;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Objects;
 import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
@@ -32,6 +30,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class ChunkCompiler implements Runnable, RenderingComponent {
     private static final int THREAD_COUNT = 2;
+    private static final int SECTION_BLOCK_WIDTH = 16;
+    private static final int SECTION_BLOCK_COUNT =
+            SECTION_BLOCK_WIDTH * SECTION_BLOCK_WIDTH * SECTION_BLOCK_WIDTH;
 
     private final Queue<Vector3i> unloadQueue;
     private final SectionManager.SectionQueue sectionQueue;
@@ -164,7 +165,7 @@ public class ChunkCompiler implements Runnable, RenderingComponent {
         private final long hash;
         private final long priority;
 
-        private final List<BlockResult> blocks = new ArrayList<>(128);
+        private final BlockResult[] blocks = new BlockResult[SECTION_BLOCK_COUNT];
 
         private final AtomicInteger pendingBlocks = new AtomicInteger();
         private final CompletableFuture<Void> future = new CompletableFuture<>();
@@ -199,6 +200,8 @@ public class ChunkCompiler implements Runnable, RenderingComponent {
                 IBlockState blockState,
                 CompletionStage<@Nullable BlockModel> block
         ) {
+            int blockIndex = getSectionBlockIndex(x, y, z);
+
             while (true) {
                 int pending = pendingBlocks.get();
                 if (pending == -1) throw new IllegalStateException();
@@ -210,7 +213,14 @@ public class ChunkCompiler implements Runnable, RenderingComponent {
                             Photonics.LOGGER.error("An error was thrown while meshing block", t);
 
                         try {
-                            completeBlock(x, y, z, blockState, result);
+                            completeBlock(
+                                    blockIndex,
+                                    x,
+                                    y,
+                                    z,
+                                    blockState,
+                                    result
+                            );
                         } catch (InterruptedException e) {
                             throw new RuntimeException(e);
                         } catch (Throwable t2) {
@@ -226,12 +236,14 @@ public class ChunkCompiler implements Runnable, RenderingComponent {
         }
 
         private void completeBlock(
+                int blockIndex,
                 int x, int y, int z,
                 IBlockState blockState,
                 @Nullable BlockModel blockModel
                 ) throws InterruptedException {
             if (blockModel != null)
-                blocks.add(new BlockResult(x, y, z, blockState, blockModel));
+                blocks[blockIndex] =
+                        new BlockResult(x, y, z, blockState, blockModel);
 
             while (true) {
                 int pending = pendingBlocks.get();
@@ -283,15 +295,35 @@ public class ChunkCompiler implements Runnable, RenderingComponent {
         }
 
         public void forEachBlock(TriConsumer<Vector3i, IBlockState, BlockModel> blockConsumer) {
-            for (var block : blocks)
+            for (var block : blocks) {
+                if (block == null) continue;
+
                 blockConsumer.accept(block, block.blockState, block.model);
+            }
         }
 
         @Override
         public void close() {
-            for (var block : blocks)
+            for (var block : blocks) {
+                if (block == null) continue;
+
                 block.model.close();
+            }
         }
+    }
+
+    private static int getSectionBlockIndex(int x, int y, int z) {
+        if ((x | y | z) < 0 ||
+                x >= SECTION_BLOCK_WIDTH ||
+                y >= SECTION_BLOCK_WIDTH ||
+                z >= SECTION_BLOCK_WIDTH) {
+            throw new IllegalArgumentException(
+                    "Section-local block coordinates out of range: "
+                            + x + ", " + y + ", " + z
+            );
+        }
+
+        return x | (z << 4) | (y << 8);
     }
 
     private static class BlockResult extends Vector3i {
