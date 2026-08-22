@@ -106,6 +106,78 @@ class RestirPipelineLifecycleTest {
     }
 
     @Test
+    void powerRisAndRegirProducersAreSeparatedByStorageBarriers()
+            throws IOException {
+        Path root = findRepositoryRoot();
+        String powerSampler = Files.readString(root.resolve(
+                "modules/core/src/main/java/at/redi2go/photonics/core/" +
+                        "rendering/restir/power/LightPowerSampler.java"
+        ));
+        int buildPdf = powerSampler.indexOf("BUILD_POWER_PDF_SHADER");
+        int pdfBarrier = powerSampler.indexOf(
+                ".thenShaderStorageBarrier(condition)",
+                buildPdf
+        );
+        int presample = powerSampler.indexOf(
+                "PRESAMPLE_LOCAL_RIS_SHADER",
+                pdfBarrier
+        );
+        int presampleBarrier = powerSampler.indexOf(
+                ".thenShaderStorageBarrier(condition)",
+                presample
+        );
+
+        String pipeline = Files.readString(root.resolve(
+                "modules/core/src/main/java/at/redi2go/photonics/core/" +
+                        "iris/extensions/RestirPipeline.java"
+        ));
+        int regir = pipeline.indexOf("ReGIRRendering.BUILD_SHADER");
+        int regirBarrier = pipeline.indexOf(
+                ".thenShaderStorageBarrier(this::isReGIREnabled)",
+                regir
+        );
+        int initialDirect = pipeline.indexOf(
+                ".deferredPass(\"initial direct\"",
+                regirBarrier
+        );
+
+        assertTrue(buildPdf >= 0 && pdfBarrier > buildPdf);
+        assertTrue(presample > pdfBarrier);
+        assertTrue(presampleBarrier > presample);
+        assertTrue(regir >= 0 && regirBarrier > regir);
+        assertTrue(
+                initialDirect > regirBarrier,
+                "ReGIR output must be visible before initial direct consumes it"
+        );
+    }
+
+    @Test
+    void indirectReservoirNormalizationRejectsNonPositiveSampleWeight()
+            throws IOException {
+        Path shader = findRepositoryRoot().resolve(
+                "modules/shaders/photonics/rendering/restir/indirect/reservoir.glsl"
+        );
+        String source = Files.readString(shader);
+        int finalize = source.indexOf("void indirect_reservoir_finalize_weight(");
+        int guard = source.indexOf("if (sample_weight <= 0.0f)", finalize);
+        int assignment = source.indexOf("reservoir.weight = 0.0f;", guard);
+        int returnStatement = source.indexOf("return;", assignment);
+        int normalization = source.indexOf(
+                "reservoir.weight = (1.0f / sample_weight)",
+                returnStatement
+        );
+
+        assertTrue(finalize >= 0, "indirect reservoir normalization is missing");
+        assertTrue(guard > finalize);
+        assertTrue(assignment > guard);
+        assertTrue(returnStatement > assignment);
+        assertTrue(
+                normalization > returnStatement,
+                "normalization must occur only after the invalid-weight guard"
+        );
+    }
+
+    @Test
     void sceneStreamingInvalidatesReservoirHistoryWithoutSnapshots()
             throws IOException {
         Path root = findRepositoryRoot();

@@ -56,8 +56,8 @@ public final class LightPowerSampler implements RenderingComponent {
     }
 
     /**
-     * Inserts the two dependent compute passes. They deliberately remain
-     * separate so Iris places an SSBO memory barrier between them.
+     * Inserts the two dependent compute passes with explicit SSBO visibility
+     * boundaries for the Power-RIS and ReGIR consumers that follow them.
      */
     public IrisPipeline.Builder addPreparationPasses(
             IrisPipeline.Builder builder,
@@ -72,6 +72,7 @@ public final class LightPowerSampler implements RenderingComponent {
                         1,
                         condition
                 )
+                .thenShaderStorageBarrier(condition)
                 .computePass(
                         "presample local light power RIS",
                         PRESAMPLE_LOCAL_RIS_SHADER,
@@ -79,7 +80,8 @@ public final class LightPowerSampler implements RenderingComponent {
                         LOCAL_RIS_TILE_COUNT,
                         1,
                         condition
-                );
+                )
+                .thenShaderStorageBarrier(condition);
     }
 
     @Override

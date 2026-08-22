@@ -96,6 +96,7 @@ public class RestirPipeline extends AbstractPhotonicsExtension {
                         1,
                         this::isReGIREnabled
                 )
+                .thenShaderStorageBarrier(this::isReGIREnabled)
                 .deferredPass("initial direct", "/photonics/rendering/restir/passes/r2_initial_direct.fsh", null, this::isBlockLightEnabled)
                 .deferredPass("initial indirect", "/photonics/rendering/restir/passes/r4_initial_indirect.fsh", null, this::isRestirGiEnabled);
 

@@ -822,16 +822,16 @@ class ReservoirSplattingShaderRegressionTest {
         String defines = Files.readString(repositoryRoot.resolve(
                 "modules/core/src/main/java/at/redi2go/photonics/core/" +
                         "iris/IrisDefines.java"
-        ));
+        )).replace("\r\n", "\n");
         String pipeline = Files.readString(repositoryRoot.resolve(
                 "modules/core/src/main/java/at/redi2go/photonics/core/" +
                         "iris/extensions/RestirPipeline.java"
-        ));
+        )).replace("\r\n", "\n");
         String properties = Files.readString(repositoryRoot.resolve(
                 "modules/versions/1_21_11/common/src/main/mixins/" +
                         "at/redi2go/photonics/common/mixins/iris/" +
                         "ShaderPropertiesMixin.java"
-        ));
+        )).replace("\r\n", "\n");
 
         assertTrue(defines.contains(
                 "\"PH_RESTIR_DENOISER_PASSES\",\n" +
