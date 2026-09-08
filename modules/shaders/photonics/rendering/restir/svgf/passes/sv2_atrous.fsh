@@ -3,22 +3,22 @@
 uniform int atrous_iteration;
 
 #include "/photonics/rendering/frag/world_interface.glsl"
-#include "/photonics/utility/normal_encoding.glsl"
+#include "/photonics/rendering/frag/frag_data.glsl"
 
 #include "/photonics/rendering/restir/common.glsl"
 #include "/photonics/rendering/restir/svgf/common.glsl"
-
-#include "/photonics/utility/color.glsl"
 
 layout(location = SVGF_DENOISE_OUT) out uvec4 denoise_out;
 
 uniform sampler2D visibility_history;
 
-float get_pass_weight(SvgfSample smple) {
-    const float pass_cutoff = PH_RESTIR_ACCUMULATION_FRAMES * 0.5f;
-    if (smple.is_hand || atrous_iteration < PH_RESTIR_DENOISER_PASSES) return 1.0f;
+const float SVGF_ATROUS_PHI_PLANE = 0.025f;
 
-    return clamp(1.0f - (smple.age / pass_cutoff), 0.0f, 1.0f);
+bool svgf_atrous_same_surface_class(FragData center_frag, FragData sample_frag) {
+    return frag_data_is_in_world(sample_frag) &&
+            frag_data_is_hand(sample_frag) == frag_data_is_hand(center_frag) &&
+            frag_data_is_light_transmissive(sample_frag) ==
+                    frag_data_is_light_transmissive(center_frag);
 }
 
 void main() {
@@ -27,75 +27,112 @@ void main() {
     SvgfSample center_sample = svgf_sample_empty();
     svgf_sample_load(center_sample, texel);
 
-    if (center_sample.depth >= 1.0f) {
+    FragData center_frag;
+    frag_data_load(center_frag, texel);
+    if (!svgf_sample_is_finite(center_sample) || center_sample.depth >= 1.0f ||
+            !frag_data_is_in_world(center_frag) ||
+            center_sample.is_hand != frag_data_is_hand(center_frag)) {
         denoise_out = uvec4(0u);
         return;
     }
 
-    float pass_weight = get_pass_weight(center_sample);
-    if (pass_weight > 0.0f) {
-        #define C0 center_sample.color
-        #define V0 center_sample.variance
+    vec3 center_color = center_sample.color;
+    float center_variance = max(center_sample.variance, 0.0f);
+    float center_luma = ph_luminance(center_color);
+    vec3 center_shading_normal = svgf_sample_get_normal(center_sample);
+    vec3 center_geo_normal = frag_data_geo_normal(center_frag);
+    vec3 center_pos = frag_data_player_pos(center_frag);
+    float center_visibility = texelFetch(visibility_history, texel, 0).r;
+    if (isnan(center_visibility) || isinf(center_visibility)) center_visibility = 1.0f;
 
-        float L0  = ph_luminance(C0);
-        vec3  N0  = svgf_sample_get_normal(center_sample);
-        float D0  = ph_linearize_depth(center_sample.depth);
-        float S0 = texelFetch(visibility_history, texel, 0).r;
+    // Anchor the center explicitly. This preserves isolated valid features
+    // and avoids another texture/guide fetch for the center tap.
+    vec3 color_sum = center_color;
+    float weight_sum = 1.0f;
+    float variance_sum = center_variance;
 
-        vec3 C_sum = vec3(0.0f);
-        float W_sum = 0.0f;
-        float V_sum = 0.0f;
+    int step_width = 1 << atrous_iteration;
+    float phi_luminance = 6.0f * sqrt(max(center_variance, 0.0000000001f));
+    const float phi_shadow = 0.1f;
+    float shadow_mix = min(
+            (center_sample.age / PH_RESTIR_ACCUMULATION_FRAMES) * 3.0f,
+            1.0f
+    );
 
-        int step_width = 1 << atrous_iteration;
+    ivec2 image_size = textureSize(prev_denoise_result, 0);
+    for (int i = 0; i < 9; ++i) {
+        if (i == SVGF_CENTER_INDEX) continue;
 
-        const float phi_depth = 0.5f;
-        float phi_luminance = 6.0f * sqrt(max(0.0f, V0 + 1e-10));
-        const float phi_shadow = 0.1f;
+        ivec2 p = texel + step_width * offset[i];
+        if (any(lessThan(p, ivec2(0))) || any(greaterThanEqual(p, image_size)))
+            continue;
 
-        for (int i = 0; i < 9; ++i) {
-            ivec2 p = texel + step_width * offset[i];
-            if (any(lessThan(p, ivec2(0))) ||
-                    any(greaterThanEqual(p, textureSize(prev_denoise_result, 0)))) continue;
+        SvgfSample sample_data = svgf_sample_empty();
+        svgf_sample_load(sample_data, p);
+        if (!svgf_sample_is_finite(sample_data) || sample_data.depth >= 1.0f ||
+                sample_data.is_hand != center_sample.is_hand)
+            continue;
 
-            SvgfSample sample_data = svgf_sample_empty();
-            svgf_sample_load(sample_data, p);
-            if (sample_data.depth >= 1.0f || sample_data.is_hand != center_sample.is_hand) continue;
+        FragData sample_frag;
+        frag_data_load(sample_frag, p);
+        if (!svgf_atrous_same_surface_class(center_frag, sample_frag) ||
+                sample_data.is_hand != frag_data_is_hand(sample_frag))
+            continue;
 
-            #define Ci sample_data.color
-            #define Vi sample_data.variance
+        float luma_weight = center_sample.is_hand
+                ? 1.0f
+                : svgf_luma_edge_stopping_weight(
+                        center_luma,
+                        ph_luminance(sample_data.color),
+                        phi_luminance
+                );
+        float detail_normal_weight = svgf_normal_edge_stopping_weight(
+                center_shading_normal,
+                svgf_sample_get_normal(sample_data)
+        );
+        float plane_weight = svgf_plane_edge_stopping_weight(
+                center_pos,
+                frag_data_player_pos(sample_frag),
+                center_geo_normal,
+                frag_data_geo_normal(sample_frag),
+                SVGF_ATROUS_PHI_PLANE
+        );
 
-            float Li = ph_luminance(Ci);
-            vec3  Ni = svgf_sample_get_normal(sample_data);
-            float Di = ph_linearize_depth(sample_data.depth);
-            float Si = texelFetch(visibility_history, p, 0).r;
+        float sample_visibility = texelFetch(visibility_history, p, 0).r;
+        if (isnan(sample_visibility) || isinf(sample_visibility)) continue;
+        float shadow_weight = mix(
+                1.0f,
+                svgf_shadow_stopping_weight(
+                        center_visibility,
+                        sample_visibility,
+                        phi_shadow
+                ),
+                shadow_mix
+        );
 
-            const float wK = kernel[i];
+        float weight = kernel[i] * luma_weight * detail_normal_weight *
+                plane_weight * shadow_weight;
+        if (weight <= 0.0f || isnan(weight) || isinf(weight)) continue;
 
-            // Color (luminance) weight
-            float wC = center_sample.is_hand ? 1.0f : svgf_luma_edge_stopping_weight(L0, Li, phi_luminance);
-
-            // Normal weight
-            float wN = svgf_normal_edge_stopping_weight(N0, Ni);
-
-            // Position weight
-            float wP = svgf_depth_edge_stopping_weight(D0, Di, phi_depth);
-
-            // Shadow weight
-            float ws_mix_factor = (center_sample.age / PH_RESTIR_ACCUMULATION_FRAMES) * 3.0f;
-            float wS = mix(1.0f, svgf_shadow_stopping_weight(S0, Si, phi_shadow), min(ws_mix_factor, 1.0f));
-
-            float w = wK * wC * wN * wP * wS;
-            W_sum += w;
-            C_sum += Ci.xyz * w;
-            V_sum += Vi * w * w;
-        }
-
-        W_sum = max(0.0001f, W_sum);
-        V_sum = max(0.0001f, V_sum);
-
-        center_sample.color = mix(center_sample.color, C_sum / W_sum, pass_weight);
-        center_sample.variance = mix(center_sample.variance, max(V_sum / (W_sum * W_sum), 0.0f), pass_weight);
+        weight_sum += weight;
+        color_sum += sample_data.color * weight;
+        variance_sum += max(sample_data.variance, 0.0f) * weight * weight;
     }
+
+    float filtered_variance = max(
+            variance_sum / (weight_sum * weight_sum),
+            0.0f
+    );
+    center_sample.color = clamp(
+            color_sum / weight_sum,
+            -65504.0f,
+            65504.0f
+    );
+    center_sample.variance = clamp(
+            filtered_variance,
+            0.0f,
+            65504.0f
+    );
 
     svgf_sample_encode(center_sample, denoise_out);
 }

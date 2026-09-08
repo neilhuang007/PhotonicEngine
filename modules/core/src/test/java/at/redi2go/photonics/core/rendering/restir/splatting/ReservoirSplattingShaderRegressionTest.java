@@ -41,6 +41,8 @@ class ReservoirSplattingShaderRegressionTest {
             "rendering/restir/svgf/passes/sv2_atrous.fsh";
     private static final String VARIANCE_PREFILTER_SHADER =
             "rendering/restir/svgf/passes/sv1_variance_prefilter.fsh";
+    private static final String ACCUMULATION_SHADER =
+            "rendering/restir/svgf/passes/sv0_accumulation.fsh";
     private static final String SVGF_SHADER =
             "rendering/restir/svgf/common.glsl";
     private static final String RESTIR_SHADER =
@@ -812,7 +814,7 @@ class ReservoirSplattingShaderRegressionTest {
     }
 
     @Test
-    void denoiserCarriesHandStateWithoutLoadingFragmentData()
+    void denoiserCarriesHandStateWithoutMutableFragmentGlobals()
             throws IOException {
         Path shaderRoot = findShaderRoot();
         String source = Files.readString(shaderRoot.resolve(
@@ -824,12 +826,15 @@ class ReservoirSplattingShaderRegressionTest {
         String common = Files.readString(shaderRoot.resolve(SVGF_SHADER));
 
         assertFalse(source.contains("setup_frag_data(0);"));
-        assertFalse(source.contains("frag_is_hand"));
+        assertFalse(source.contains("_frag_data"));
         assertFalse(source.contains(
                 "/photonics/rendering/frag/common.glsl"
         ));
-        assertTrue(source.contains("smple.is_hand"));
+        assertTrue(source.contains("sample_data.is_hand"));
         assertTrue(source.contains("center_sample.is_hand"));
+        assertTrue(source.contains("FragData center_frag;"));
+        assertTrue(source.contains("frag_data_load(center_frag, texel);"));
+        assertTrue(source.contains("frag_data_is_hand(center_frag)"));
         assertTrue(source.contains(
                 "uniform int atrous_iteration;"
         ));
@@ -869,6 +874,13 @@ class ReservoirSplattingShaderRegressionTest {
         String denoising = Files.readString(shaderRoot.resolve(
                 DENOISING_SHADER
         ));
+        String prefilter = Files.readString(shaderRoot.resolve(
+                VARIANCE_PREFILTER_SHADER
+        ));
+        String accumulation = Files.readString(shaderRoot.resolve(
+                ACCUMULATION_SHADER
+        ));
+        String common = Files.readString(shaderRoot.resolve(SVGF_SHADER));
 
         assertTrue(history.contains(
                 "abs(dot(dist, frag_geo_normal)) > 0.25f"
@@ -878,15 +890,72 @@ class ReservoirSplattingShaderRegressionTest {
         assertTrue(history.contains("temporal_history.lighting *= weight_sum;"));
         assertTrue(history.contains("temporal_history.variance *= weight_sum;"));
         assertFalse(history.contains("block_divsor"));
+        assertTrue(history.contains("bool sample_history_reproject("));
+        assertTrue(history.contains("out vec2 previous_pixel"));
+        assertTrue(history.contains("if (weight_sum <= 0.0001f) return false;"));
+        assertTrue(history.contains(
+                "return dot(lighting, vec3(0.299f, 0.587f, 0.114f));"
+        ));
+        assertTrue(history.contains(
+                "const float fast_history_samples = " +
+                        "min(floor(PH_RESTIR_ACCUMULATION_FRAMES * 0.25f), 2);"
+        ));
+        assertFalse(history.contains("fast_shadow_weight"));
+        assertFalse(history.contains("fast_light_weight"));
 
-        assertTrue(denoising.contains(
-                "center_sample.variance = mix("
+        assertTrue(accumulation.contains("svgf_gather_responsive_statistics"));
+        assertTrue(accumulation.contains("svgf_gather_noisy_statistics"));
+        assertTrue(accumulation.contains("svgf_rgb_to_ycocg"));
+        assertTrue(accumulation.contains("svgf_ycocg_to_rgb"));
+        assertTrue(accumulation.contains("sample_history_moments(noisy_center)"));
+        assertTrue(accumulation.contains("history.lighting.w = max(mix("));
+
+        assertTrue(common.contains("vec3 svgf_rgb_to_ycocg(vec3 rgb)"));
+        assertTrue(common.contains("vec3 svgf_ycocg_to_rgb(vec3 ycocg)"));
+        assertTrue(common.contains("float svgf_plane_edge_stopping_weight("));
+        assertTrue(common.contains("abs(dot(center_to_sample, center_geo_normal))"));
+        assertTrue(common.contains("abs(dot(center_to_sample, sample_geo_normal))"));
+        assertFalse(common.contains("pow(clamp(dot(center_normal, sample_normal)"));
+
+        assertTrue(prefilter.contains("smple.age < SVGF_FRESH_HISTORY_MAX"));
+        assertTrue(prefilter.contains("const float SVGF_FRESH_HISTORY_MAX = 4.0f;"));
+        assertTrue(prefilter.contains("moment_sum += history.variance.xy * weight;"));
+        assertTrue(prefilter.matches(
+                "(?s).*reconstructed_moments\\.y\\s*-\\s*" +
+                        "reconstructed_moments\\.x\\s*\\*\\s*" +
+                        "reconstructed_moments\\.x.*"
         ));
-        assertTrue(denoising.contains(
-                "return clamp(1.0f - (smple.age / pass_cutoff), " +
-                        "0.0f, 1.0f);"
+        assertTrue(prefilter.contains("fresh_variance_boost = 4.0f / max(smple.age, 1.0f)"));
+        assertTrue(prefilter.contains("accumulated_output_variance = variance_sum / weight_sum"));
+        assertTrue(prefilter.matches(
+                "(?s).*max\\(\\s*reconstructed_variance \\* " +
+                        "fresh_variance_boost,\\s*accumulated_output_variance\\s*\\).*"
         ));
+        assertTrue(prefilter.contains("variance_sum += max(history.variance.z, 0.0f) * weight;"));
+        assertTrue(prefilter.contains("smple.color = clamp(center.lighting.rgb"));
+        assertTrue(prefilter.contains("svgf_prefilter_same_surface_class"));
+        assertTrue(prefilter.contains("svgf_plane_edge_stopping_weight("));
+        assertTrue(prefilter.contains("svgf_normal_edge_stopping_weight("));
+        assertTrue(prefilter.contains("svgf_luma_edge_stopping_weight("));
+
+        assertFalse(denoising.contains("get_pass_weight"));
+        assertFalse(denoising.contains("pass_cutoff"));
+        assertFalse(denoising.contains("mix(center_variance"));
         assertFalse(denoising.contains("const float phi_luminance"));
+        assertTrue(denoising.contains("FragData center_frag;"));
+        assertTrue(denoising.contains("svgf_atrous_same_surface_class"));
+        assertTrue(denoising.contains("frag_data_player_pos(center_frag)"));
+        assertTrue(denoising.contains("frag_data_geo_normal(center_frag)"));
+        assertTrue(denoising.contains("svgf_sample_get_normal(center_sample)"));
+        assertTrue(denoising.contains("svgf_plane_edge_stopping_weight("));
+        assertTrue(denoising.contains(
+                "variance_sum += max(sample_data.variance, 0.0f) * weight * weight;"
+        ));
+        assertTrue(denoising.contains(
+                "variance_sum / (weight_sum * weight_sum)"
+        ));
+        assertFalse(denoising.contains("svgf_depth_edge_stopping_weight("));
+        assertFalse(denoising.contains("ph_linearize_depth("));
     }
 
     private static Path findShaderRoot() {
