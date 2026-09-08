@@ -6,11 +6,20 @@ removes one opaque sandstone block through the integrated server, and reads a
 small linear-light ROI from the raw direct and final denoised GPU attachments on
 every Photonics render frame.
 
-Run the two-pass native Photon fixture from the repository root:
+Run the native Photon fixture from the repository root, selecting the desired
+pass count explicitly:
 
 ```powershell
-.\scripts\run-shader-game-test.ps1 -ShaderPack Photon-0.4-support.zip -GradleArgs '-PshaderGameTestScenario=denoiserResponsiveness','-PshaderGameTestRenderDistance=8','-PshaderGameTestPitch=20','-PshaderGameTestYaw=180'
+.\scripts\run-shader-game-test.ps1 -ShaderPack Photon-0.4-support.zip -GradleArgs '-PshaderGameTestScenario=denoiserResponsiveness','-PshaderGameTestDenoiserPasses=5','-PshaderGameTestRenderDistance=8','-PshaderGameTestPitch=20','-PshaderGameTestYaw=180'
 ```
+
+`-PshaderGameTestDenoiserPasses=N` accepts a nonnegative integer when the
+selected pack is `Photon-0.4-support.zip`. Fixture preparation replaces the
+single `PHOTONICS_RESTIR_DENOISER_PASSES` entry in the generated
+`fabric/run/shaderpacks/Photon-0.4-support.zip.txt`; it does not modify the
+tracked fixture. Omit the property to keep the tracked fixture's pass count.
+This makes pass-count comparisons repeatable without editing pack settings
+between runs.
 
 Add `-PshaderGameTestFreezeTicks=true` for the controlled-edit mode. It freezes
 background simulation while the reporter still schedules the real placement
