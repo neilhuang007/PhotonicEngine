@@ -74,10 +74,13 @@ pixel counts to make the effective sample area reviewable.
 Edge evidence uses signed before-minus-placed response on each scanline. It
 excludes unstable geometry, applies a five-pixel moving average, derives a
 separate background level from each outer tail, and interpolates local 10% and
-90% crossings. Raw and denoised widths are paired on the same scanline and
-shadow side; the report includes every accepted pair and uses the median paired
-width increase for the quality guard. This avoids folding the perspective
-shadow shape and a nonzero Monte Carlo tail into one full-ROI profile width.
+90% crossings. A scanline needs at least three confidently changed shadow-core
+pixels, and its raw peak must be one of those pixels; crossing searches still
+use every stable receiver pixel so they retain the penumbra. Raw and denoised
+widths are paired on the same scanline and shadow side; the report includes
+every accepted pair and uses the median paired width increase for the quality
+guard. This avoids folding the perspective shadow shape and a nonzero Monte
+Carlo tail into one full-ROI profile width.
 
 Each endpoint is the average of the final 16 frames in its finite capture
 window. That average is the practical reference for this bounded regression,

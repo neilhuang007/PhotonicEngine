@@ -1508,6 +1508,7 @@ public final class DenoiserGameTestReporter {
     private static final class EdgeResult {
         private static final int SMOOTH_RADIUS = 2;
         private static final int MIN_PAIRED_EDGES = 8;
+        private static final int MIN_CHANGED_CORE_PIXELS_PER_SCANLINE = 3;
         private static final double MIN_EDGE_CONTRAST = MIN_RAW_STEP * 2.0;
 
         final boolean available;
@@ -1537,6 +1538,7 @@ public final class DenoiserGameTestReporter {
             if (roi == null) return new EdgeResult(
                     false, 0, 0, 0, List.of(), List.of(), List.of(), axis);
             boolean[] stable = geometryMask(before, placed);
+            boolean[] changed = changedMask(before, placed);
             double[] rawCollapsed = collapsedSignedProfile(
                     before.directMean, placed.directMean, roi, axis, stable);
             double[] filteredCollapsed = collapsedSignedProfile(
@@ -1544,16 +1546,20 @@ public final class DenoiserGameTestReporter {
             int minor = axis == Axis.X ? roi.height : roi.width;
             List<EdgePair> pairs = new ArrayList<>();
             for (int scanline = 0; scanline < minor; scanline++) {
+                boolean[] changedOnScanline = scanlineMask(
+                        changed, roi, axis, scanline);
+                if (count(changedOnScanline, true)
+                        < MIN_CHANGED_CORE_PIXELS_PER_SCANLINE) continue;
                 double[] raw = smooth(scanlineSignedProfile(
                         before.directMean, placed.directMean, roi, axis,
                         stable, scanline));
                 double[] filtered = smooth(scanlineSignedProfile(
                         before.filteredMean, placed.filteredMean, roi, axis,
                         stable, scanline));
-                int rawPeak = peak(raw, 0, raw.length);
+                int rawPeak = peak(raw, changedOnScanline, 0, raw.length);
                 if (rawPeak < 0) continue;
                 int searchRadius = Math.max(4, raw.length / 20);
-                int filteredPeak = peak(filtered,
+                int filteredPeak = peak(filtered, null,
                         Math.max(0, rawPeak - searchRadius),
                         Math.min(filtered.length, rawPeak + searchRadius + 1));
                 if (filteredPeak < 0) continue;
@@ -1607,6 +1613,19 @@ public final class DenoiserGameTestReporter {
             return result;
         }
 
+        private static boolean[] scanlineMask(
+                boolean[] mask, Roi roi, Axis axis, int scanline
+        ) {
+            int major = axis == Axis.X ? roi.width : roi.height;
+            boolean[] result = new boolean[major];
+            for (int at = 0; at < major; at++) {
+                int x = axis == Axis.X ? at : scanline;
+                int y = axis == Axis.X ? scanline : at;
+                result[at] = mask[y * roi.width + x];
+            }
+            return result;
+        }
+
         private static double[] collapsedSignedProfile(
                 float[] before, float[] after, Roi roi, Axis axis,
                 boolean[] stableGeometry
@@ -1648,10 +1667,13 @@ public final class DenoiserGameTestReporter {
             return result;
         }
 
-        private static int peak(double[] profile, int from, int to) {
+        private static int peak(
+                double[] profile, boolean[] eligible, int from, int to
+        ) {
             int peak = -1;
             for (int index = from; index < to; index++) {
-                if (Double.isFinite(profile[index])
+                if ((eligible == null || eligible[index])
+                        && Double.isFinite(profile[index])
                         && (peak < 0 || profile[index] > profile[peak])) {
                     peak = index;
                 }
@@ -1737,6 +1759,8 @@ public final class DenoiserGameTestReporter {
             result.put("axis", axis.name().toLowerCase(Locale.ROOT));
             result.put("validPairedEdges", pairs.size());
             result.put("minimumPairedEdges", MIN_PAIRED_EDGES);
+            result.put("minimumChangedCorePixelsPerScanline",
+                    MIN_CHANGED_CORE_PIXELS_PER_SCANLINE);
             result.put("smoothingRadiusPixels", SMOOTH_RADIUS);
             result.put("minimumRawContrast", MIN_EDGE_CONTRAST);
             result.put("medianRaw10To90WidthPixels", rawWidthPixels);
