@@ -31,8 +31,10 @@ loom {
             property("photonics.usePackagedShaders", "true")
             property("photonics.traceSceneChanges", providers.gradleProperty("traceSceneChanges").orElse("false").get())
             property("photonics.traceLighting", providers.gradleProperty("traceLighting").orElse("false").get())
+            property("photonics.profileGpu", providers.gradleProperty("profileGpu").orElse("false").get())
             property("photonicengine.shaderGameTest.freezeTicks", providers.gradleProperty("shaderGameTestFreezeTicks").orElse("false").get())
             property("photonicengine.shaderGameTest.traceStartup", providers.gradleProperty("shaderGameTestTraceStartup").orElse("false").get())
+            property("photonicengine.shaderGameTest.scenario", providers.gradleProperty("shaderGameTestScenario").orElse("standard").get())
             providers.gradleProperty("shaderGameTestRenderDistance").orNull?.let {
                 property("photonicengine.shaderGameTest.renderDistance", it)
             }
@@ -44,6 +46,24 @@ loom {
             }
             providers.gradleProperty("shaderGameTestHotbarSlot").orNull?.let {
                 property("photonicengine.shaderGameTest.hotbarSlot", it)
+            }
+            providers.gradleProperty("shaderGameTestDenoiserCamera").orNull?.let {
+                property("photonicengine.shaderGameTest.denoiser.camera", it)
+            }
+            providers.gradleProperty("shaderGameTestDenoiserEditBlock").orNull?.let {
+                property("photonicengine.shaderGameTest.denoiser.editBlock", it)
+            }
+            providers.gradleProperty("shaderGameTestDenoiserSourceBlock").orNull?.let {
+                property("photonicengine.shaderGameTest.denoiser.sourceBlock", it)
+            }
+            providers.gradleProperty("shaderGameTestDenoiserReceiverBlock").orNull?.let {
+                property("photonicengine.shaderGameTest.denoiser.receiverBlock", it)
+            }
+            providers.gradleProperty("shaderGameTestDenoiserRoi").orNull?.let {
+                property("photonicengine.shaderGameTest.denoiser.roi", it)
+            }
+            providers.gradleProperty("shaderGameTestDenoiserEdgeAxis").orNull?.let {
+                property("photonicengine.shaderGameTest.denoiser.edgeAxis", it)
             }
         }
     }

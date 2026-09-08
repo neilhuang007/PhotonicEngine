@@ -28,6 +28,10 @@ public class PhotonicsClientFabric implements ClientModInitializer {
             throw new IllegalStateException(e);
         }
 
-        ShaderGameTestReporter.registerIfRequested();
+        if (DenoiserGameTestReporter.isRequested()) {
+            DenoiserGameTestReporter.registerIfRequested();
+        } else {
+            ShaderGameTestReporter.registerIfRequested();
+        }
     }
 }
