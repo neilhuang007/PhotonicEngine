@@ -39,7 +39,9 @@ void main() {
     vec3 center_color = center_sample.color;
     float center_variance = max(center_sample.variance, 0.0f);
     float center_luma = ph_luminance(center_color);
+    uint center_shading_normal_packed = center_sample.packed_normal;
     vec3 center_shading_normal = svgf_sample_get_normal(center_sample);
+    uint center_geo_normal_packed = center_frag.data1.y;
     vec3 center_geo_normal = frag_data_geo_normal(center_frag);
     vec3 center_pos = frag_data_player_pos(center_frag);
     float center_visibility = texelFetch(visibility_history, texel, 0).r;
@@ -86,17 +88,30 @@ void main() {
                         ph_luminance(sample_data.color),
                         phi_luminance
                 );
-        float detail_normal_weight = svgf_normal_edge_stopping_weight(
+        float detail_normal_weight = svgf_packed_normal_edge_stopping_weight(
                 center_shading_normal,
-                svgf_sample_get_normal(sample_data)
+                center_shading_normal_packed,
+                sample_data.packed_normal
         );
-        float plane_weight = svgf_plane_edge_stopping_weight(
-                center_pos,
-                frag_data_player_pos(sample_frag),
-                center_geo_normal,
-                frag_data_geo_normal(sample_frag),
-                SVGF_ATROUS_PHI_PLANE
-        );
+        uint sample_geo_normal_packed = sample_frag.data1.y;
+        vec3 sample_pos = frag_data_player_pos(sample_frag);
+        float plane_weight;
+        if (sample_geo_normal_packed == center_geo_normal_packed) {
+            plane_weight = svgf_plane_edge_stopping_weight(
+                    center_pos,
+                    sample_pos,
+                    center_geo_normal,
+                    SVGF_ATROUS_PHI_PLANE
+            );
+        } else {
+            plane_weight = svgf_plane_edge_stopping_weight(
+                    center_pos,
+                    sample_pos,
+                    center_geo_normal,
+                    frag_data_geo_normal(sample_frag),
+                    SVGF_ATROUS_PHI_PLANE
+            );
+        }
 
         float sample_visibility = texelFetch(visibility_history, p, 0).r;
         if (isnan(sample_visibility) || isinf(sample_visibility)) continue;

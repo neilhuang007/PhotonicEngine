@@ -913,6 +913,11 @@ class ReservoirSplattingShaderRegressionTest {
         assertTrue(common.contains("vec3 svgf_rgb_to_ycocg(vec3 rgb)"));
         assertTrue(common.contains("vec3 svgf_ycocg_to_rgb(vec3 ycocg)"));
         assertTrue(common.contains("float svgf_plane_edge_stopping_weight("));
+        assertTrue(common.contains("float svgf_packed_normal_edge_stopping_weight("));
+        assertTrue(common.contains(
+                "if (sample_packed_normal == center_packed_normal) return 1.0f;"
+        ));
+        assertTrue(common.contains("ph_unpack_normal(sample_packed_normal)"));
         assertTrue(common.contains("abs(dot(center_to_sample, center_geo_normal))"));
         assertTrue(common.contains("abs(dot(center_to_sample, sample_geo_normal))"));
         assertFalse(common.contains("pow(clamp(dot(center_normal, sample_normal)"));
@@ -935,7 +940,7 @@ class ReservoirSplattingShaderRegressionTest {
         assertTrue(prefilter.contains("smple.color = clamp(center.lighting.rgb"));
         assertTrue(prefilter.contains("svgf_prefilter_same_surface_class"));
         assertTrue(prefilter.contains("svgf_plane_edge_stopping_weight("));
-        assertTrue(prefilter.contains("svgf_normal_edge_stopping_weight("));
+        assertTrue(prefilter.contains("svgf_packed_normal_edge_stopping_weight("));
         assertTrue(prefilter.contains("svgf_luma_edge_stopping_weight("));
 
         assertFalse(denoising.contains("get_pass_weight"));

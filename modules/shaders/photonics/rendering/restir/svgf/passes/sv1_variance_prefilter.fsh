@@ -10,12 +10,6 @@ layout(location = SVGF_DENOISE_OUT) out uvec4 denoise_out;
 const float SVGF_FRESH_HISTORY_MAX = 4.0f;
 const float SVGF_SPATIAL_PHI_PLANE = 0.025f;
 
-vec3 svgf_prefilter_shading_normal(FragData frag) {
-    return frag_data_is_hand(frag)
-            ? frag_data_geo_normal(frag)
-            : frag_data_tex_normal(frag);
-}
-
 bool svgf_prefilter_same_surface_class(FragData center_frag, FragData sample_frag) {
     return frag_data_is_in_world(sample_frag) &&
             frag_data_is_hand(sample_frag) == frag_data_is_hand(center_frag) &&
@@ -42,8 +36,10 @@ void main() {
         smple.age = clamp(center.lighting.a, 0.0f, PH_RESTIR_ACCUMULATION_FRAMES);
 
         vec3 center_pos = frag_data_player_pos(_frag_data);
+        uint center_geo_normal_packed = _frag_data.data1.y;
         vec3 center_geo_normal = frag_data_geo_normal(_frag_data);
-        vec3 center_shading_normal = svgf_prefilter_shading_normal(_frag_data);
+        uint center_shading_normal_packed = smple.packed_normal;
+        vec3 center_shading_normal = ph_unpack_normal(center_shading_normal_packed);
         float center_luma = ph_luminance(center.lighting.rgb);
         float phi_luminance = max(
                 0.05f,
@@ -69,18 +65,32 @@ void main() {
             frag_data_load(sample_frag, p);
             if (!svgf_prefilter_same_surface_class(_frag_data, sample_frag)) continue;
 
-            vec3 sample_geo_normal = frag_data_geo_normal(sample_frag);
-            vec3 sample_shading_normal = svgf_prefilter_shading_normal(sample_frag);
-            float plane_weight = svgf_plane_edge_stopping_weight(
-                    center_pos,
-                    frag_data_player_pos(sample_frag),
-                    center_geo_normal,
-                    sample_geo_normal,
-                    SVGF_SPATIAL_PHI_PLANE
-            );
-            float detail_weight = svgf_normal_edge_stopping_weight(
+            uint sample_geo_normal_packed = sample_frag.data1.y;
+            vec3 sample_pos = frag_data_player_pos(sample_frag);
+            float plane_weight;
+            if (sample_geo_normal_packed == center_geo_normal_packed) {
+                plane_weight = svgf_plane_edge_stopping_weight(
+                        center_pos,
+                        sample_pos,
+                        center_geo_normal,
+                        SVGF_SPATIAL_PHI_PLANE
+                );
+            } else {
+                plane_weight = svgf_plane_edge_stopping_weight(
+                        center_pos,
+                        sample_pos,
+                        center_geo_normal,
+                        frag_data_geo_normal(sample_frag),
+                        SVGF_SPATIAL_PHI_PLANE
+                );
+            }
+            uint sample_shading_normal_packed = smple.is_hand
+                    ? sample_frag.data1.y
+                    : sample_frag.data1.z;
+            float detail_weight = svgf_packed_normal_edge_stopping_weight(
                     center_shading_normal,
-                    sample_shading_normal
+                    center_shading_normal_packed,
+                    sample_shading_normal_packed
             );
             float luma_weight = svgf_luma_edge_stopping_weight(
                     center_luma,

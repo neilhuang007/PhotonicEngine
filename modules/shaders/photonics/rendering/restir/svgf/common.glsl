@@ -106,6 +106,20 @@ float svgf_normal_edge_stopping_weight(vec3 center_normal, vec3 sample_normal)
     return weight * weight;
 }
 
+float svgf_packed_normal_edge_stopping_weight(
+        vec3 center_normal,
+        uint center_packed_normal,
+        uint sample_packed_normal
+) {
+    // Equal encodings produce the same decoded unit normal, whose weight is 1.
+    if (sample_packed_normal == center_packed_normal) return 1.0f;
+
+    return svgf_normal_edge_stopping_weight(
+            center_normal,
+            ph_unpack_normal(sample_packed_normal)
+    );
+}
+
 float svgf_depth_edge_stopping_weight(float center_depth, float sample_depth, float phi)
 {
     return exp(-abs(center_depth - sample_depth) / phi);
@@ -133,6 +147,23 @@ float svgf_plane_edge_stopping_weight(
             abs(dot(center_to_sample, sample_geo_normal))
     );
     return normal_weight * exp(-plane_distance / max(phi, 0.0001f));
+}
+
+float svgf_plane_edge_stopping_weight(
+        vec3 center_pos,
+        vec3 sample_pos,
+        vec3 shared_geo_normal,
+        float phi
+) {
+    // This overload is equivalent to the two-normal form when both packed
+    // geometric normals are equal: alignment is 1 and both plane dots match.
+    if (any(isnan(center_pos)) || any(isinf(center_pos)) ||
+            any(isnan(sample_pos)) || any(isinf(sample_pos)) ||
+            any(isnan(shared_geo_normal)) || any(isinf(shared_geo_normal)))
+        return 0.0f;
+
+    return exp(-abs(dot(sample_pos - center_pos, shared_geo_normal)) /
+            max(phi, 0.0001f));
 }
 
 float svgf_luma_edge_stopping_weight(float center_luma, float sample_luma, float phi)
