@@ -43,6 +43,11 @@ struct SvgfNoisyStatistics {
     bool valid;
 };
 
+vec3 svgf_stat_center_shading_normal;
+uint svgf_stat_center_shading_packed;
+uint svgf_stat_center_geo_packed;
+vec3 svgf_stat_noisy_center;
+
 vec3 svgf_load_noisy_lighting(ivec2 texel) {
     vec3 lighting = vec3(0.0f);
 #if defined PH_ENABLE_BLOCKLIGHT
@@ -102,9 +107,6 @@ SvgfResponsiveStatistics svgf_gather_responsive_statistics(
     float weight_sum = 0.0f;
     ivec2 center = ivec2(floor(previous_pixel + 0.5f));
     ivec2 history_size = textureSize(prev_fast_diffuse_history, 0);
-    uint center_shading_packed = frag_is_hand ? _frag_data.data1.y : _frag_data.data1.z;
-    vec3 center_shading_normal = ph_unpack_normal(center_shading_packed);
-    uint center_geo_packed = _frag_data.data1.y;
 
     for (int i = 0; i < 9; ++i) {
         ivec2 p = center + offset[i];
@@ -115,9 +117,9 @@ SvgfResponsiveStatistics svgf_gather_responsive_statistics(
         frag_data_load_previous(previous_frag, p);
         float weight = kernel[i] * svgf_temporal_geometry_weight(
                 previous_frag,
-                center_shading_normal,
-                center_shading_packed,
-                center_geo_packed
+                svgf_stat_center_shading_normal,
+                svgf_stat_center_shading_packed,
+                svgf_stat_center_geo_packed
         );
         vec4 responsive = texelFetch(prev_fast_diffuse_history, p, 0);
         responsive.rgb *= exposure_ratio;
@@ -148,9 +150,6 @@ SvgfNoisyStatistics svgf_gather_noisy_statistics() {
     float second_luma_moment = 0.0f;
     float weight_sum = 0.0f;
     ivec2 history_size = textureSize(diffuse_history, 0);
-    uint center_shading_packed = frag_is_hand ? _frag_data.data1.y : _frag_data.data1.z;
-    vec3 center_shading_normal = ph_unpack_normal(center_shading_packed);
-    uint center_geo_packed = _frag_data.data1.y;
 
     for (int i = 0; i < 9; ++i) {
         ivec2 p = frag_tex_coord + offset[i];
@@ -158,14 +157,20 @@ SvgfNoisyStatistics svgf_gather_noisy_statistics() {
             continue;
 
         FragData sample_frag;
-        frag_data_load(sample_frag, p);
+        vec3 noisy;
+        if (i == SVGF_CENTER_INDEX) {
+            sample_frag = _frag_data;
+            noisy = svgf_stat_noisy_center;
+        } else {
+            frag_data_load(sample_frag, p);
+            noisy = svgf_load_noisy_lighting(p);
+        }
         float weight = kernel[i] * svgf_temporal_geometry_weight(
                 sample_frag,
-                center_shading_normal,
-                center_shading_packed,
-                center_geo_packed
+                svgf_stat_center_shading_normal,
+                svgf_stat_center_shading_packed,
+                svgf_stat_center_geo_packed
         );
-        vec3 noisy = svgf_load_noisy_lighting(p);
         if (weight <= 0.0f || any(isnan(noisy)) || any(isinf(noisy)))
             continue;
 
@@ -292,6 +297,11 @@ void main() {
     temporal_history.variance.yz *= exposure_ratio * exposure_ratio;
 #endif
 
+    vec4 noisy_center = vec4(
+            di_output.rgb + gi_output.rgb,
+            min(di_output.a, gi_output.a)
+    );
+
     SvgfResponsiveStatistics responsive_statistics = SvgfResponsiveStatistics(
             vec3(0.0f),
             vec3(0.0f),
@@ -304,15 +314,19 @@ void main() {
     );
 #if PH_RESTIR_DENOISER_PASSES > 0 && PH_RESTIR_ACCUMULATION_FRAMES >= 12
     if (history_reprojected && temporal_history.lighting.w >= 4.0f) {
+        svgf_stat_center_shading_packed = frag_is_hand
+                ? _frag_data.data1.y
+                : _frag_data.data1.z;
+        svgf_stat_center_shading_normal = ph_unpack_normal(
+                svgf_stat_center_shading_packed
+        );
+        svgf_stat_center_geo_packed = _frag_data.data1.y;
+        svgf_stat_noisy_center = noisy_center.rgb;
         responsive_statistics = svgf_gather_responsive_statistics(previous_pixel, exposure_ratio);
         noisy_statistics = svgf_gather_noisy_statistics();
     }
 #endif
 
-    vec4 noisy_center = vec4(
-            di_output.rgb + gi_output.rgb,
-            min(di_output.a, gi_output.a)
-    );
     sample_history_add_sample(temporal_history, svgf_fast_history,
             noisy_center);
 #if PH_RESTIR_DENOISER_PASSES > 0 && PH_RESTIR_ACCUMULATION_FRAMES >= 12
