@@ -31,8 +31,10 @@ loom {
             property("photonics.usePackagedShaders", "true")
             property("photonics.traceSceneChanges", providers.gradleProperty("traceSceneChanges").orElse("false").get())
             property("photonics.traceLighting", providers.gradleProperty("traceLighting").orElse("false").get())
+            property("photonics.profileGpu", providers.gradleProperty("profileGpu").orElse("false").get())
             property("photonicengine.shaderGameTest.freezeTicks", providers.gradleProperty("shaderGameTestFreezeTicks").orElse("false").get())
             property("photonicengine.shaderGameTest.traceStartup", providers.gradleProperty("shaderGameTestTraceStartup").orElse("false").get())
+            property("photonicengine.shaderGameTest.scenario", providers.gradleProperty("shaderGameTestScenario").orElse("standard").get())
             providers.gradleProperty("shaderGameTestRenderDistance").orNull?.let {
                 property("photonicengine.shaderGameTest.renderDistance", it)
             }
@@ -45,22 +47,71 @@ loom {
             providers.gradleProperty("shaderGameTestHotbarSlot").orNull?.let {
                 property("photonicengine.shaderGameTest.hotbarSlot", it)
             }
+            providers.gradleProperty("shaderGameTestDenoiserCamera").orNull?.let {
+                property("photonicengine.shaderGameTest.denoiser.camera", it)
+            }
+            providers.gradleProperty("shaderGameTestDenoiserEditBlock").orNull?.let {
+                property("photonicengine.shaderGameTest.denoiser.editBlock", it)
+            }
+            providers.gradleProperty("shaderGameTestDenoiserSourceBlock").orNull?.let {
+                property("photonicengine.shaderGameTest.denoiser.sourceBlock", it)
+            }
+            providers.gradleProperty("shaderGameTestDenoiserReceiverBlock").orNull?.let {
+                property("photonicengine.shaderGameTest.denoiser.receiverBlock", it)
+            }
+            providers.gradleProperty("shaderGameTestDenoiserRoi").orNull?.let {
+                property("photonicengine.shaderGameTest.denoiser.roi", it)
+            }
+            providers.gradleProperty("shaderGameTestDenoiserEdgeAxis").orNull?.let {
+                property("photonicengine.shaderGameTest.denoiser.edgeAxis", it)
+            }
         }
     }
 }
 
 val selectedShaderGameTestPack = providers.gradleProperty("shaderGameTestPack")
     .orElse("Shrimple-ph-0.4.zip").get()
+val shaderGameTestDenoiserPasses = providers
+    .gradleProperty("shaderGameTestDenoiserPasses")
+    .orNull
+    ?.let { configured ->
+        configured.toIntOrNull()?.takeIf { it >= 0 }
+            ?: throw GradleException(
+                "shaderGameTestDenoiserPasses must be a nonnegative integer."
+            )
+    }
 
 val prepareShaderGameTestFixture by tasks.registering(Copy::class) {
     val packName = selectedShaderGameTestPack
+    val denoiserPasses = shaderGameTestDenoiserPasses
     description = "Installs the tracked shader pack used by the shader game test."
     from(layout.projectDirectory.dir("src/shaderGameTest"))
     into(layout.projectDirectory.dir("run"))
     inputs.property("shaderGameTestPack", packName)
+    inputs.property(
+        "shaderGameTestDenoiserPasses",
+        denoiserPasses?.toString() ?: "<fixture-default>"
+    )
     filesMatching("config/iris.properties") {
         filter { line ->
             if (line.startsWith("shaderPack=")) "shaderPack=$packName" else line
+        }
+    }
+    if (denoiserPasses != null) {
+        if (packName != "Photon-0.4-support.zip") {
+            throw GradleException(
+                "shaderGameTestDenoiserPasses is supported only with " +
+                    "shaderGameTestPack=Photon-0.4-support.zip."
+            )
+        }
+        filesMatching("shaderpacks/Photon-0.4-support.zip.txt") {
+            filter { line ->
+                if (line.startsWith("PHOTONICS_RESTIR_DENOISER_PASSES=")) {
+                    "PHOTONICS_RESTIR_DENOISER_PASSES=$denoiserPasses"
+                } else {
+                    line
+                }
+            }
         }
     }
 }

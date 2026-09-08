@@ -17,6 +17,7 @@ import net.irisshaders.iris.pipeline.WorldRenderingPipeline;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
@@ -75,6 +76,8 @@ public abstract class CompositeRendererMixin {
     )
     private String replaceDebugPassName(String name, @Local(name = "i") int i) {
         CompositeRendererPassExt pass = (CompositeRendererPassExt) passes.get(i);
+        if ((Object) this instanceof PhotonicsRenderer renderer)
+            renderer.beginGpuPass(pass.getDebugName());
         return pass.getDebugName();
     }
 
@@ -132,6 +135,7 @@ public abstract class CompositeRendererMixin {
             )
     )
     private void invokePassActions0(CallbackInfo ci, @Local(name = "i") int i) {
+        photonics$endGpuPassTiming();
         CompositeRendererPassExt pass = (CompositeRendererPassExt) passes.get(i);
         pass.getActions().forEach(Runnable::run);
     }
@@ -145,7 +149,14 @@ public abstract class CompositeRendererMixin {
             )
     )
     private void invokePassActions1(CallbackInfo ci, @Local(name = "i") int i) {
+        photonics$endGpuPassTiming();
         CompositeRendererPassExt pass = (CompositeRendererPassExt) passes.get(i);
         pass.getActions().forEach(Runnable::run);
+    }
+
+    @Unique
+    private void photonics$endGpuPassTiming() {
+        if ((Object) this instanceof PhotonicsRenderer renderer)
+            renderer.endGpuPass();
     }
 }

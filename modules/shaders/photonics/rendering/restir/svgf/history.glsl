@@ -18,6 +18,17 @@ struct SampleHistory {
     float visibility;
 };
 
+// Keep all raw temporal moment producers on the established SVGF luminance
+// definition. YCoCg Y is used independently as the history-clamping guide.
+float sample_history_moment_luminance(vec3 lighting) {
+    return dot(lighting, vec3(0.299f, 0.587f, 0.114f));
+}
+
+vec2 sample_history_moments(vec3 lighting) {
+    float luma = sample_history_moment_luminance(lighting);
+    return vec2(luma, luma * luma);
+}
+
 SampleHistory sample_history_empty() {
     return SampleHistory(vec4(0.0f), vec4(0.0f), 1.0f);
 }
@@ -71,17 +82,22 @@ void sample_history_load(out SampleHistory history, ivec2 texel) {
 }
 
 #if defined REPROJECT_PASS
-void sample_history_reproject(out SampleHistory temporal_history, out vec4 fast_history) {
+bool sample_history_reproject(
+        out SampleHistory temporal_history,
+        out vec4 fast_history,
+        out vec2 previous_pixel
+) {
     temporal_history.lighting = vec4(0.0f);
     temporal_history.variance = vec4(0.0f);
     temporal_history.visibility = 0.0f;
     fast_history = vec4(0.0f);
+    previous_pixel = vec2(-1.0f);
 
     // Raster history was sampled with the previous frame's jitter. Applying
     // the current offset to an old image makes history drift even at rest.
     vec3 center = ph_reproject_player_pos(frag_player_pos, frag_is_hand, ph_previous_frame_jitter());
     if (frameCounter == 0 || any(isnan(center)) || any(isinf(center)) ||
-            center.z <= 0.0f || center.z >= 1.0f) return;
+            center.z <= 0.0f || center.z >= 1.0f) return false;
     center.xy *= PH_VIEW_SIZE;
     center.xy -= 0.5f;
     center.z = ph_linearize_depth(center.z);
@@ -132,12 +148,16 @@ void sample_history_reproject(out SampleHistory temporal_history, out vec4 fast_
         weight_sum += weight;
     }
 
-    weight_sum = 1.0f / max(0.0001f, weight_sum);
+    if (weight_sum <= 0.0001f) return false;
+
+    weight_sum = 1.0f / weight_sum;
 
     temporal_history.lighting *= weight_sum;
     temporal_history.variance *= weight_sum;
     temporal_history.visibility *= weight_sum;
     fast_history *= weight_sum;
+    previous_pixel = center.xy;
+    return true;
 }
 
 #if PH_RESTIR_ACCUMULATION_FRAMES > 4
@@ -179,8 +199,7 @@ void sample_history_add_sample(inout SampleHistory history, inout vec4 fast_hist
 
     // variance
 #if PH_RESTIR_DENOISER_PASSES > 0
-    vec2 moments = vec2(dot(smple.rgb, vec3(0.299, 0.587, 0.114)));
-    moments.y = moments.x * moments.x;
+    vec2 moments = sample_history_moments(smple.rgb);
 
     history.variance.xy = mix(history.variance.xy, moments, mix_factor);
     history.variance.w = 1f;
@@ -194,21 +213,14 @@ void sample_history_add_sample(inout SampleHistory history, inout vec4 fast_hist
 #endif
 
 #if PH_RESTIR_ACCUMULATION_FRAMES >= 12
-    const float fast_history_samples = min(floor(PH_RESTIR_ACCUMULATION_FRAMES * 0.25f), 8);
-    const float fast_history_cutoff = fast_history_samples * 2.0f;
-
-    const float fast_shadow_weight = 1.5f;
-    const float fast_light_weight = 1.0f / 1.5f;
-
+    // The responsive history is deliberately short. It is a denoiser guide,
+    // not an estimator reservoir, and should follow a lighting step in a few
+    // rendered frames.
+    // The increment below turns a limit of two retained samples into an
+    // effective three-sample running history (alpha = 1 / 3 at saturation).
+    const float fast_history_samples = min(floor(PH_RESTIR_ACCUMULATION_FRAMES * 0.25f), 2);
     fast_history.w = min(fast_history.w, fast_history_samples);
     fast_history.rgb = mix(fast_history.rgb, smple.rgb, 1f / (++fast_history.w));
-    if (history.lighting.a > fast_history_cutoff) {
-        history.lighting.rgb = clamp(
-                history.lighting.rgb,
-                fast_history.rgb * fast_light_weight,
-                fast_history.rgb * fast_shadow_weight
-        );
-    }
 #endif
 }
 #endif
