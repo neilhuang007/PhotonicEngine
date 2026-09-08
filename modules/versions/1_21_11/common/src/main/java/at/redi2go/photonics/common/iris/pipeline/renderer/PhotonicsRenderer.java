@@ -27,6 +27,8 @@ import java.util.function.Supplier;
 
 public class PhotonicsRenderer extends CompositeRenderer {
     private final String name;
+    private final GpuPassProfiler.Tracker gpuTiming;
+    private GpuPassProfiler.Scope activePassTiming;
 
     public PhotonicsRenderer(
             String name,
@@ -69,6 +71,7 @@ public class PhotonicsRenderer extends CompositeRenderer {
         );
 
         this.name = name;
+        this.gpuTiming = new GpuPassProfiler.Tracker(name);
         for (CompositeRendererPassExt pass : getPasses()) {
             var definition = passes.get(pass.getIndex());
 
@@ -83,13 +86,45 @@ public class PhotonicsRenderer extends CompositeRenderer {
         return name;
     }
 
+    public void beginGpuPass(String passName) {
+        endGpuPass();
+        activePassTiming = gpuTiming.begin(passName);
+    }
+
+    public void endGpuPass() {
+        if (activePassTiming == null) return;
+        activePassTiming.close();
+        activePassTiming = null;
+    }
+
     private List<CompositeRendererPassExt> getPasses() {
         return ((CompositeRendererAccessor) this).getPasses();
+    }
+
+    @Override
+    public void renderAll() {
+        gpuTiming.collectAvailable();
+        var rendererTiming = gpuTiming.begin("total");
+        try {
+            super.renderAll();
+        } finally {
+            endGpuPass();
+            rendererTiming.close();
+        }
     }
 
     @Override
     public void recalculateSizes() {
         for (CompositeRendererPassExt pass : getPasses())
             pass.updateSize();
+    }
+
+    @Override
+    public void destroy() {
+        try {
+            gpuTiming.close();
+        } finally {
+            super.destroy();
+        }
     }
 }

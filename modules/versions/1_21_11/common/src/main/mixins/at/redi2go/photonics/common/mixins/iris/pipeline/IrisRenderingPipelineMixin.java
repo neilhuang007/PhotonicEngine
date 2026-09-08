@@ -205,6 +205,14 @@ public abstract class IrisRenderingPipelineMixin implements IrisRenderingPipelin
         IrisManager.onRender();
     }
 
+    @Inject(method = "destroy", at = @At("HEAD"))
+    private void destroyPhotonicsRenderers(CallbackInfo ci) {
+        if (phRenderers == null) return;
+        for (var renderer : phRenderers)
+            renderer.destroy();
+        phRenderers = List.of();
+    }
+
     @Override
     public GlBufferHolder photonics$bufferHolder() {
         return bufferHolder;
