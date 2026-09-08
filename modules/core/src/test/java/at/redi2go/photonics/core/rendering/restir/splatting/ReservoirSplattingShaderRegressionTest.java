@@ -942,7 +942,7 @@ class ReservoirSplattingShaderRegressionTest {
         assertTrue(prefilter.contains("svgf_prefilter_same_surface_class"));
         assertTrue(prefilter.contains("svgf_plane_edge_stopping_weight("));
         assertTrue(prefilter.contains("svgf_packed_normal_edge_stopping_weight("));
-        assertTrue(prefilter.contains("svgf_luma_edge_stopping_weight("));
+        assertTrue(prefilter.contains("svgf_color_edge_stopping_weight("));
 
         assertFalse(denoising.contains("get_pass_weight"));
         assertFalse(denoising.contains("pass_cutoff"));

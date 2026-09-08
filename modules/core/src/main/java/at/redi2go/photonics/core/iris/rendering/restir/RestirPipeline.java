@@ -153,10 +153,12 @@ public class RestirPipeline extends PhotonicsPipeline {
                 .addAttachment("diffuse_history", ITextureFormat.rgba32ui(), CREATE_SAMPLER | FLIP)
                 .addAttachment("fast_diffuse_history", isDenoisingEnabled() ? ITextureFormat.rgba16f() : ITextureFormat.rgba32f(), CREATE_SAMPLER | FLIP)
                 .addAttachment("visibility_history", ITextureFormat.r16f(), CREATE_SAMPLER | FLIP)
+                .addAttachment("chroma_history", ITextureFormat.rgba32f(), CREATE_SAMPLER | FLIP, this::isDenoisingEnabled)
                 .build(this::registerComponent);
 
         var denoiseFramebuffer = irisPipeline.newFramebuffer(properties.getRenderScale())
                 .addAttachment("denoise_result", ITextureFormat.rgba32ui(), CREATE_SAMPLER | FLIP, this::isDenoisingEnabled)
+                .addAttachment("denoise_chroma_variance", ITextureFormat.rg32f(), CREATE_SAMPLER | FLIP, this::isDenoisingEnabled)
                 .build(this::registerComponent);
 
         int[] atrousIteration = new int[] {0};

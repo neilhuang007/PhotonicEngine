@@ -1,6 +1,8 @@
 #include "/photonics/utility/normal_encoding.glsl"
 
 #define SVGF_DENOISE_OUT 0
+#define SVGF_CHROMA_VARIANCE_OUT 1
+uniform sampler2D prev_denoise_chroma_variance;
 //ph_required: uniform usampler2D prev_denoise_result;
 
 // 3×3 Gaussian Kernel & Offsets
@@ -166,9 +168,18 @@ float svgf_plane_edge_stopping_weight(
             max(phi, 0.0001f));
 }
 
-float svgf_luma_edge_stopping_weight(float center_luma, float sample_luma, float phi)
+// Independent chroma uncertainty prevents a luminance-null color fluctuation
+// from becoming a false edge. Stable color projections have low chroma variance
+// and retain their boundaries even when their luminance matches the receiver.
+float svgf_color_edge_stopping_weight(
+        vec3 center, vec3 sample_color, float phi_luma, vec2 chroma_variance)
 {
-    return exp(-abs(center_luma - sample_luma) / phi);
+    vec2 chroma_delta = abs(svgf_rgb_to_ycocg(center - sample_color).yz);
+    vec2 phi_chroma = 6.0f * sqrt(max(chroma_variance, vec2(0.0000000001f)));
+    vec2 chroma_distance = chroma_delta / phi_chroma;
+    float luma_distance = abs(ph_luminance(center) - ph_luminance(sample_color)) /
+            max(phi_luma, 0.000001f);
+    return exp(-max(luma_distance, max(chroma_distance.x, chroma_distance.y)));
 }
 
 float svgf_shadow_stopping_weight(float center_vis, float sample_vis, float phi)

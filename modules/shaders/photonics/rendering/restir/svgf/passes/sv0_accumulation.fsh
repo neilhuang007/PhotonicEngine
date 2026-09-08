@@ -19,6 +19,9 @@ uniform sampler2D gi_output;
 layout(location = SVGF_HISTORY_OUT) out uvec4 svgf_history;
 layout(location = SVGF_FAST_HISTORY_OUT) out vec4 svgf_fast_history;
 layout(location = SVGF_VISIBILITY_HISTORY_OUT) out float svgf_visiblity_history;
+#if PH_RESTIR_DENOISER_PASSES > 0
+layout(location = SVGF_CHROMA_HISTORY_OUT) out vec4 svgf_chroma_history;
+#endif
 
 // Compact, independently implemented adaptation of the statistical history
 // clamping and anti-lag ideas described by RELAX. The responsive history and
@@ -195,6 +198,7 @@ SvgfNoisyStatistics svgf_gather_noisy_statistics(
 void svgf_apply_history_clamp(
         inout SampleHistory history,
         inout vec4 fast_history,
+        inout vec4 chroma_moments,
         vec3 noisy_center,
         float noisy_visibility,
         SvgfResponsiveStatistics responsive,
@@ -244,6 +248,7 @@ void svgf_apply_history_clamp(
     // changes and reinitialize them only as part of a confidence reset.
     vec2 fresh_moments = sample_history_moments(noisy_center);
     history.variance.xy = mix(history.variance.xy, fresh_moments, reset_amount);
+    chroma_moments = mix(chroma_moments, svgf_chroma_moments(noisy_center), reset_amount);
     history.variance.z = mix(
             history.variance.z,
             sample_history_min_variance(1.0f),
@@ -255,6 +260,10 @@ void main() {
     svgf_history = uvec4(0u);
     svgf_fast_history = vec4(0.0f);
     svgf_visiblity_history = 1.0f;
+    vec4 chroma_moments = vec4(0.0f);
+#if PH_RESTIR_DENOISER_PASSES > 0
+    svgf_chroma_history = vec4(0.0f);
+#endif
 
     setup_frag_data(0);
     if (!frag_is_in_world) return;
@@ -283,6 +292,7 @@ void main() {
     history_reprojected = sample_history_reproject(
             temporal_history,
             svgf_fast_history,
+            chroma_moments,
             previous_pixel
     );
 #endif
@@ -294,6 +304,8 @@ void main() {
     svgf_fast_history.rgb *= exposure_ratio;
     temporal_history.variance.x *= exposure_ratio;
     temporal_history.variance.yz *= exposure_ratio * exposure_ratio;
+    chroma_moments.xy *= exposure_ratio;
+    chroma_moments.zw *= exposure_ratio * exposure_ratio;
 #endif
 
     vec4 noisy_center = vec4(
@@ -333,12 +345,13 @@ void main() {
     }
 #endif
 
-    sample_history_add_sample(temporal_history, svgf_fast_history,
+    sample_history_add_sample(temporal_history, svgf_fast_history, chroma_moments,
             noisy_center);
 #if PH_RESTIR_DENOISER_PASSES > 0 && PH_RESTIR_ACCUMULATION_FRAMES >= 12
     svgf_apply_history_clamp(
             temporal_history,
             svgf_fast_history,
+            chroma_moments,
             noisy_center.rgb,
             noisy_center.a,
             responsive_statistics,
@@ -346,4 +359,7 @@ void main() {
     );
 #endif
     sample_history_encode(temporal_history, svgf_history, svgf_visiblity_history);
+#if PH_RESTIR_DENOISER_PASSES > 0
+    svgf_chroma_history = chroma_moments;
+#endif
 }

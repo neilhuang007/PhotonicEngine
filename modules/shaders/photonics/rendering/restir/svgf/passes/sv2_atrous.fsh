@@ -9,6 +9,7 @@ uniform int atrous_iteration;
 #include "/photonics/rendering/restir/svgf/common.glsl"
 
 layout(location = SVGF_DENOISE_OUT) out uvec4 denoise_out;
+layout(location = SVGF_CHROMA_VARIANCE_OUT) out vec2 denoise_chroma_variance;
 
 uniform sampler2D visibility_history;
 
@@ -22,6 +23,7 @@ bool svgf_atrous_same_surface_class(FragData center_frag, FragData sample_frag) 
 }
 
 void main() {
+    denoise_chroma_variance = vec2(0.0f);
     ivec2 texel = ivec2(gl_FragCoord.xy);
 
     SvgfSample center_sample = svgf_sample_empty();
@@ -38,7 +40,12 @@ void main() {
 
     vec3 center_color = center_sample.color;
     float center_variance = max(center_sample.variance, 0.0f);
-    float center_luma = ph_luminance(center_color);
+    vec2 center_chroma_variance = max(texelFetch(prev_denoise_chroma_variance, texel, 0).rg,
+            vec2(0.0f));
+    if (any(isnan(center_chroma_variance)) || any(isinf(center_chroma_variance))) {
+        denoise_out = uvec4(0u);
+        return;
+    }
     uint center_shading_normal_packed = center_sample.packed_normal;
     vec3 center_shading_normal = svgf_sample_get_normal(center_sample);
     uint center_geo_normal_packed = center_frag.data1.y;
@@ -52,6 +59,7 @@ void main() {
     vec3 color_sum = center_color;
     float weight_sum = 1.0f;
     float variance_sum = center_variance;
+    vec2 chroma_variance_sum = center_chroma_variance;
 
     int step_width = 1 << atrous_iteration;
     float phi_luminance = 6.0f * sqrt(max(center_variance, 0.0000000001f));
@@ -81,12 +89,16 @@ void main() {
                 sample_data.is_hand != frag_data_is_hand(sample_frag))
             continue;
 
-        float luma_weight = center_sample.is_hand
+        vec2 sample_chroma_variance = max(texelFetch(prev_denoise_chroma_variance, p, 0).rg,
+                vec2(0.0f));
+        if (any(isnan(sample_chroma_variance)) || any(isinf(sample_chroma_variance))) continue;
+        float color_weight = center_sample.is_hand
                 ? 1.0f
-                : svgf_luma_edge_stopping_weight(
-                        center_luma,
-                        ph_luminance(sample_data.color),
-                        phi_luminance
+                : svgf_color_edge_stopping_weight(
+                        center_color,
+                        sample_data.color,
+                        phi_luminance,
+                        max(center_chroma_variance, sample_chroma_variance)
                 );
         float detail_normal_weight = svgf_packed_normal_edge_stopping_weight(
                 center_shading_normal,
@@ -125,13 +137,14 @@ void main() {
                 shadow_mix
         );
 
-        float weight = kernel[i] * luma_weight * detail_normal_weight *
+        float weight = kernel[i] * color_weight * detail_normal_weight *
                 plane_weight * shadow_weight;
         if (weight <= 0.0f || isnan(weight) || isinf(weight)) continue;
 
         weight_sum += weight;
         color_sum += sample_data.color * weight;
         variance_sum += max(sample_data.variance, 0.0f) * weight * weight;
+        chroma_variance_sum += sample_chroma_variance * weight * weight;
     }
 
     float filtered_variance = max(
@@ -149,5 +162,6 @@ void main() {
             65504.0f
     );
 
+    denoise_chroma_variance = max(chroma_variance_sum / (weight_sum * weight_sum), vec2(0.0f));
     svgf_sample_encode(center_sample, denoise_out);
 }

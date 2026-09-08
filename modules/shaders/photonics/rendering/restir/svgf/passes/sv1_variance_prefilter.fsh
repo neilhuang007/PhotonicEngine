@@ -6,6 +6,7 @@
 #include "/photonics/rendering/restir/svgf/history.glsl"
 
 layout(location = SVGF_DENOISE_OUT) out uvec4 denoise_out;
+layout(location = SVGF_CHROMA_VARIANCE_OUT) out vec2 denoise_chroma_variance;
 
 const float SVGF_FRESH_HISTORY_MAX = 4.0f;
 const float SVGF_SPATIAL_PHI_PLANE = 0.025f;
@@ -19,6 +20,7 @@ bool svgf_prefilter_same_surface_class(FragData center_frag, FragData sample_fra
 
 void main() {
     setup_frag_data(0);
+    denoise_chroma_variance = vec2(0.0f);
 
     SvgfSample smple = svgf_sample_empty();
     if (frag_is_in_world) {
@@ -35,12 +37,17 @@ void main() {
         smple.is_hand = frag_is_hand;
         smple.age = clamp(center.lighting.a, 0.0f, PH_RESTIR_ACCUMULATION_FRAMES);
 
+        vec4 center_chroma = texelFetch(chroma_history, frag_tex_coord, 0);
+        if (any(isnan(center_chroma)) || any(isinf(center_chroma))) {
+            svgf_sample_encode(smple, denoise_out);
+            return;
+        }
+        vec2 center_chroma_variance = svgf_chroma_output_variance(center_chroma, smple.age);
         vec3 center_pos = frag_data_player_pos(_frag_data);
         uint center_geo_normal_packed = _frag_data.data1.y;
         vec3 center_geo_normal = frag_data_geo_normal(_frag_data);
         uint center_shading_normal_packed = smple.packed_normal;
         vec3 center_shading_normal = ph_unpack_normal(center_shading_normal_packed);
-        float center_luma = ph_luminance(center.lighting.rgb);
         float phi_luminance = max(
                 0.05f,
                 6.0f * sqrt(max(center.variance.z, 0.000001f))
@@ -50,9 +57,17 @@ void main() {
         vec2 moment_sum = vec2(0.0f);
         float variance_sum = 0.0f;
         float weight_sum = 0.0f;
+        vec2 chroma_variance_sum = vec2(0.0f);
+        SampleHistory neighbors[9];
+        vec4 neighbor_chroma[9];
+        float geometry_weights[9];
+        vec4 spatial_chroma_moments = vec4(0.0f);
+        vec2 spatial_luma_moments = vec2(0.0f);
+        float geometry_weight_sum = 0.0f;
 
         ivec2 history_size = textureSize(diffuse_history, 0);
         for (int i = 0; i < 9; ++i) {
+            geometry_weights[i] = 0.0f;
             ivec2 p = frag_tex_coord + offset[i];
             if (any(lessThan(p, ivec2(0))) || any(greaterThanEqual(p, history_size)))
                 continue;
@@ -100,17 +115,48 @@ void main() {
                     center_shading_normal_packed,
                     sample_shading_normal_packed
             );
-            float luma_weight = svgf_luma_edge_stopping_weight(
-                    center_luma,
-                    ph_luminance(history.lighting.rgb),
-                    phi_luminance
-            );
-            float weight = kernel[i] * plane_weight * detail_weight * luma_weight;
+            vec4 chroma = i == SVGF_CENTER_INDEX ? center_chroma :
+                    texelFetch(chroma_history, p, 0);
+            if (any(isnan(chroma)) || any(isinf(chroma))) continue;
+            float weight = kernel[i] * plane_weight * detail_weight;
             if (weight <= 0.0f || isnan(weight) || isinf(weight)) continue;
+            neighbors[i] = history;
+            neighbor_chroma[i] = chroma;
+            geometry_weights[i] = weight;
+            spatial_chroma_moments += chroma * weight;
+            spatial_luma_moments += history.variance.xy * weight;
+            geometry_weight_sum += weight;
+        }
 
+        // A one-sample temporal moment has zero chroma variance. Estimate its
+        // uncertainty before applying color weights, otherwise an outlier
+        // rejects every neighbor and incorrectly declares itself noise-free.
+        vec2 local_chroma_variance = center_chroma_variance;
+        if (smple.age < SVGF_FRESH_HISTORY_MAX && geometry_weight_sum > 0.000001f) {
+            spatial_chroma_moments /= geometry_weight_sum;
+            spatial_luma_moments /= geometry_weight_sum;
+            float boost = 4.0f / max(smple.age, 1.0f);
+            local_chroma_variance = max(local_chroma_variance, boost * max(
+                    spatial_chroma_moments.zw -
+                            spatial_chroma_moments.xy * spatial_chroma_moments.xy,
+                    vec2(0.0f)));
+            float local_luma_variance = boost * max(spatial_luma_moments.y -
+                    spatial_luma_moments.x * spatial_luma_moments.x, 0.0f);
+            phi_luminance = max(phi_luminance, 6.0f * sqrt(local_luma_variance));
+        }
+        for (int i = 0; i < 9; ++i) {
+            if (geometry_weights[i] <= 0.0f) continue;
+            SampleHistory history = neighbors[i];
+            vec2 sample_chroma_variance = svgf_chroma_output_variance(
+                    neighbor_chroma[i], history.lighting.a);
+            float color_weight = svgf_color_edge_stopping_weight(
+                    center.lighting.rgb, history.lighting.rgb, phi_luminance,
+                    max(local_chroma_variance, sample_chroma_variance));
+            float weight = geometry_weights[i] * color_weight;
             color_sum += history.lighting.rgb * weight;
             moment_sum += history.variance.xy * weight;
             variance_sum += max(history.variance.z, 0.0f) * weight;
+            chroma_variance_sum += sample_chroma_variance * weight;
             weight_sum += weight;
         }
 
@@ -119,6 +165,7 @@ void main() {
         if (weight_sum <= 0.000001f) {
             smple.color = clamp(center.lighting.rgb, -65504.0f, 65504.0f);
             smple.variance = clamp(center.variance.z, 0.0f, 65504.0f);
+            denoise_chroma_variance = center_chroma_variance;
         } else if (smple.age < SVGF_FRESH_HISTORY_MAX) {
             vec3 reconstructed_color = color_sum / weight_sum;
             vec2 reconstructed_moments = moment_sum / weight_sum;
@@ -131,6 +178,8 @@ void main() {
             float accumulated_output_variance = variance_sum / weight_sum;
 
             smple.color = clamp(reconstructed_color, -65504.0f, 65504.0f);
+            denoise_chroma_variance = max(local_chroma_variance,
+                    chroma_variance_sum / weight_sum);
             smple.variance = clamp(
                     max(
                             reconstructed_variance * fresh_variance_boost,
@@ -144,6 +193,7 @@ void main() {
             // Keep the center lighting untouched and only prefilter that value.
             smple.color = clamp(center.lighting.rgb, -65504.0f, 65504.0f);
             smple.variance = clamp(variance_sum / weight_sum, 0.0f, 65504.0f);
+            denoise_chroma_variance = chroma_variance_sum / weight_sum;
         }
     }
 

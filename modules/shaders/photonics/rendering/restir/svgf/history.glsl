@@ -1,6 +1,7 @@
 #define SVGF_HISTORY_OUT 0
 #define SVGF_FAST_HISTORY_OUT 1
 #define SVGF_VISIBILITY_HISTORY_OUT 2
+#define SVGF_CHROMA_HISTORY_OUT 3
 
 #include "/photonics/rendering/frag/frame_jitter.glsl"
 
@@ -10,6 +11,24 @@ uniform sampler2D visibility_history;
 uniform sampler2D prev_visibility_history;
 uniform usampler2D prev_diffuse_history;
 uniform sampler2D prev_fast_diffuse_history;
+#if PH_RESTIR_DENOISER_PASSES > 0
+uniform sampler2D chroma_history;
+uniform sampler2D prev_chroma_history;
+#endif
+
+// Raw Co/Cg means and second moments. These are independent of clipped color
+// and of the established luminance moments in SampleHistory. Use RGBA32F to
+// keep exposure-scaled squared moments finite and cancellation well behaved.
+vec4 svgf_chroma_moments(vec3 color) {
+    vec2 chroma = svgf_rgb_to_ycocg(color).yz;
+    return vec4(chroma, chroma * chroma);
+}
+
+vec2 svgf_chroma_output_variance(vec4 moments, float age) {
+    return max(moments.zw - moments.xy * moments.xy, vec2(0.0f)) /
+            max(age, 1.0f);
+}
+
 
 struct SampleHistory {
     vec4 lighting;
@@ -85,12 +104,14 @@ void sample_history_load(out SampleHistory history, ivec2 texel) {
 bool sample_history_reproject(
         out SampleHistory temporal_history,
         out vec4 fast_history,
+        out vec4 chroma_moments,
         out vec2 previous_pixel
 ) {
     temporal_history.lighting = vec4(0.0f);
     temporal_history.variance = vec4(0.0f);
     temporal_history.visibility = 0.0f;
     fast_history = vec4(0.0f);
+    chroma_moments = vec4(0.0f);
     previous_pixel = vec2(-1.0f);
 
     // Raster history was sampled with the previous frame's jitter. Applying
@@ -131,6 +152,10 @@ bool sample_history_reproject(
         uvec4 temporal_sample = texelFetch(prev_diffuse_history, p, 0);
         float visiblity_sample = texelFetch(prev_visibility_history, p, 0).r;
         vec4 fast_sample = texelFetch(prev_fast_diffuse_history, p, 0);
+#if PH_RESTIR_DENOISER_PASSES > 0
+        vec4 chroma_sample = texelFetch(prev_chroma_history, p, 0);
+        if (any(isnan(chroma_sample)) || any(isinf(chroma_sample))) continue;
+#endif
 
         vec2 mixWeights = abs(weights[i] - mixFactors);
         float weight = mixWeights.x * mixWeights.y;
@@ -144,6 +169,9 @@ bool sample_history_reproject(
         temporal_history.variance += result.variance * weight;
         temporal_history.visibility += result.visibility * weight;
         fast_history += fast_sample * weight;
+#if PH_RESTIR_DENOISER_PASSES > 0
+        chroma_moments += chroma_sample * weight;
+#endif
 
         weight_sum += weight;
     }
@@ -156,6 +184,7 @@ bool sample_history_reproject(
     temporal_history.variance *= weight_sum;
     temporal_history.visibility *= weight_sum;
     fast_history *= weight_sum;
+    chroma_moments *= weight_sum;
     previous_pixel = center.xy;
     return true;
 }
@@ -164,8 +193,8 @@ bool sample_history_reproject(
 float sample_history_min_variance(float samples) {
     const float high_variance = 10.0f;
 
-    if (samples > 4f) return 0.0001f;
-    if (samples > 2f) return 0.01f;
+    if (samples > 4.0f) return 0.0001f;
+    if (samples > 2.0f) return 0.01f;
     if (frag_is_hand) return high_variance;
 
     const float padding = 0.13f;
@@ -181,7 +210,7 @@ float sample_history_min_variance(float samples) {
 }
 #endif
 
-void sample_history_add_sample(inout SampleHistory history, inout vec4 fast_history, vec4 smple) {
+void sample_history_add_sample(inout SampleHistory history, inout vec4 fast_history, inout vec4 chroma_moments, vec4 smple) {
 #if PH_RESTIR_DENOISER_PASSES <= 0
     // Zero passes is a true raw estimator view, not temporal-only denoising.
     history.lighting = vec4(smple.rgb / get_exposure(), 1.0f);
@@ -192,7 +221,8 @@ void sample_history_add_sample(inout SampleHistory history, inout vec4 fast_hist
 #endif
 
     history.lighting.w = min(history.lighting.w, PH_RESTIR_ACCUMULATION_FRAMES);
-    float mix_factor = 1f / (++history.lighting.w);
+    float mix_factor = 1.0f / (++history.lighting.w);
+    chroma_moments = mix(chroma_moments, svgf_chroma_moments(smple.rgb), mix_factor);
 
     history.lighting.rgb = mix(history.lighting.rgb, smple.rgb, mix_factor);
     history.visibility = mix(history.visibility, smple.a, mix_factor);
@@ -202,7 +232,7 @@ void sample_history_add_sample(inout SampleHistory history, inout vec4 fast_hist
     vec2 moments = sample_history_moments(smple.rgb);
 
     history.variance.xy = mix(history.variance.xy, moments, mix_factor);
-    history.variance.w = 1f;
+    history.variance.w = 1.0f;
 
     history.variance.z = max(
             history.variance.y - (history.variance.x * history.variance.x),
@@ -220,7 +250,7 @@ void sample_history_add_sample(inout SampleHistory history, inout vec4 fast_hist
     // effective three-sample running history (alpha = 1 / 3 at saturation).
     const float fast_history_samples = min(floor(PH_RESTIR_ACCUMULATION_FRAMES * 0.25f), 2);
     fast_history.w = min(fast_history.w, fast_history_samples);
-    fast_history.rgb = mix(fast_history.rgb, smple.rgb, 1f / (++fast_history.w));
+    fast_history.rgb = mix(fast_history.rgb, smple.rgb, 1.0f / (++fast_history.w));
 #endif
 }
 #endif
