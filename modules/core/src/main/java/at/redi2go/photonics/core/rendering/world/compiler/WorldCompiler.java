@@ -298,6 +298,8 @@ public class WorldCompiler implements Runnable, RenderingComponent {
 
     @Override
     public void registerUniforms(IUniformHolder uniforms) {
+        uniforms.uniform1i(IUniformUpdateFrequency.perFrame(), "ph_world_scene_ready",
+                () -> contentGeneration > 0 ? 1 : 0);
         // TODO: Replace this with actual values
         uniforms.uniform1i(IUniformUpdateFrequency.once(), "phFirstBuildTime", () -> 1);
         uniforms.uniform1i(IUniformUpdateFrequency.once(), "phLastBuildTime", () -> 1);

@@ -85,7 +85,7 @@ public class ShaderPatcher {
     }
 
     private static Path getPhotonicsShadersPath() {
-        if (Photonics.isDevEnvironment()) {
+        if (Photonics.isDevEnvironment() && !Boolean.getBoolean("photonics.usePackagedShaders")) {
             return ModLoader.getGameDir().resolve("../../../../shaders")
                     .normalize();
         }

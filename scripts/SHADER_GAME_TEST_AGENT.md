@@ -12,6 +12,9 @@ with `-ShaderPack Photon-0.4-support.zip`. The runner must never rewrite a pack
 archive or turn shader compilation failure into a vanilla-rendering pass.
 Normal Iris settings live in the adjacent `.zip.txt` files and are recorded,
 along with the archive SHA-256, in each report.
+The dedicated launch uses `photonics.usePackagedShaders=true`: engine GLSL comes
+from the same build's resources as an installed mod, not the live development
+source directory. Java and shader changes take effect together on the next run.
 
 For the stained-glass room diagnostic:
 

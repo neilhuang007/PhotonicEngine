@@ -162,7 +162,12 @@ it. The roof/load investigation found two distinct defects in the old setup:
 - At startup tick 20, the client already has the sandstone roof at `y=-43`,
   while the voxel scene misses it. By tick 40 the GPU ray hits that same roof.
   Early GI sky illumination during this upload gap is not a denoiser artifact.
-  `photon-roof-startup` retains the transition; startup latency remains open.
+  `photon-roof-startup` retains the transition. The iterator now distinguishes
+  SCENE_UNAVAILABLE before the first completed upload from an escaped sky ray.
+  `photon-scene-ready-two-pass` verifies generation 0 produces zero irradiance
+  (formerly luminance 0.16005), then the loaded roof and stable colored light
+  are present at tick 40. This fixes false initial sky radiance, not the cost of
+  preparing geometry or all partially resident-scene cases.
 - At two chunks, CPU and voxel sun rays both hit a loaded sandstone wall, but
   native shadow-map lookups report three floor probes fully sunlit. With eight
   chunks, all three native lookups report shadow and the erroneous orange floor
@@ -191,6 +196,14 @@ watchdog regression verifies both isolation and preservation, and passes.
 Integration checkpoint: 75 core tests and 8 Minecraft-common tests pass (no
 skips). The Fabric test task has no unit tests; its real native game runs are
 the integration evidence above. Rendering work remains open below.
+
+`photon-two-pass` is INVALID as a filter comparison: development mode read a
+new live GLSL scene-readiness uniform against previously compiled Java without
+that uniform, making tracing unavailable. A pause screen also interrupted the
+run and correctly failed it. Dedicated game tests now request the packaged
+engine shader snapshot, matching an installed mod; ordinary development hot
+reload remains available. Do not interpret these dark images as a two-pass
+denoiser defect.
 
 ## Dynamic history and instantaneous shadows
 

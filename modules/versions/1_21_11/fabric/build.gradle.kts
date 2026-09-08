@@ -26,6 +26,9 @@ loom {
             // separate from this launch configuration. When it is added, it
             // must write the generic JSON result described in the root README.
             property("photonicengine.shaderGameTest.reportFile", "automation/shader-game-test-report.json")
+            // Exercise the installed mod's shader snapshot, not live source
+            // files that can drift from the already compiled Java client.
+            property("photonics.usePackagedShaders", "true")
             property("photonics.traceSceneChanges", providers.gradleProperty("traceSceneChanges").orElse("false").get())
             property("photonics.traceLighting", providers.gradleProperty("traceLighting").orElse("false").get())
             property("photonicengine.shaderGameTest.freezeTicks", providers.gradleProperty("shaderGameTestFreezeTicks").orElse("false").get())

@@ -3,6 +3,7 @@
 
 // tracing uniforms
 
+//ph_required: uniform int ph_world_scene_ready;
 //ph_required: uniform vec3 rt_camera_position;
 //ph_required: uniform vec3 world_offset;
 //ph_required: uniform vec3 delta_world_offset;

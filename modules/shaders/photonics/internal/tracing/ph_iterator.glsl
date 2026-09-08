@@ -7,6 +7,7 @@
 #define PH_RAY_STATE_HAS_HIT 1
 #define PH_RAY_STATE_HAS_MISS 2
 #define PH_RAY_STATE_OUT_OF_BOUNDS 3
+#define PH_RAY_STATE_SCENE_UNAVAILABLE 4
 
 #define PH_RAY_DEFAULT_ITERATIONS 100
 const float ph_16_rcp = 1.0f / 16.0f;
@@ -24,6 +25,12 @@ struct RayIterator {
 };
 
 void _ray_iter_setup(inout RayIterator ray) {
+    // An acceleration structure not uploaded yet is unknown, not empty space.
+    // In particular, it cannot prove that a GI ray reached the sky.
+    if (ph_world_scene_ready == 0) {
+        ray.state = PH_RAY_STATE_SCENE_UNAVAILABLE;
+        return;
+    }
     vec3 dir_inv = 1.0f / ray.direction;
     float t0 = ph_intersects_world(dir_inv, ray.position);
     if (t0 == -1) {
@@ -64,6 +71,11 @@ void ray_iter_set_direction(inout RayIterator ray, vec3 direction) {
 
 const vec3 ph_ray_no_target = vec3(-1.0f);
 void _ray_iter_trace_next(inout RayIterator ray, vec3 target) {
+    if (ray.state == PH_RAY_STATE_SCENE_UNAVAILABLE) {
+        ray.iterations = 0;
+        ray.hit = ph_ray_miss;
+        return;
+    }
     if (ray.state != PH_RAY_STATE_READY) return;
     ray.hit = ph_ray_miss;
     if (ray.iterations == 0) {
@@ -198,7 +210,8 @@ bool ray_iter_has_next(inout RayIterator ray) {
 
 RayResult ray_iter_next(inout RayIterator ray) {
     _ray_iter_trace_next(ray, ph_ray_no_target);
-    if (ray.state != PH_RAY_STATE_OUT_OF_BOUNDS)
+    if (ray.state != PH_RAY_STATE_OUT_OF_BOUNDS &&
+            ray.state != PH_RAY_STATE_SCENE_UNAVAILABLE)
         ray.state = PH_RAY_STATE_READY;
 
     return ray.hit;
@@ -211,7 +224,8 @@ bool ray_iter_has_next_block(inout RayIterator ray, vec3 target) {
 
 RayResult ray_iter_next_block(inout RayIterator ray, vec3 target) {
     _ray_iter_trace_next(ray, target);
-    if (ray.state != PH_RAY_STATE_OUT_OF_BOUNDS)
+    if (ray.state != PH_RAY_STATE_OUT_OF_BOUNDS &&
+            ray.state != PH_RAY_STATE_SCENE_UNAVAILABLE)
         ray.state = PH_RAY_STATE_READY;
 
     return ray.hit;

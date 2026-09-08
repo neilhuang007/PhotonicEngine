@@ -887,6 +887,7 @@ final class ShaderGameTestReporter {
         metrics.put("shaderPack", shaderPack);
         metrics.put("shaderPackSettings", shaderPackSettings);
         metrics.put("shaderPackSha256", shaderPackSha256);
+        metrics.put("packagedEngineShaders", Boolean.getBoolean("photonics.usePackagedShaders"));
         metrics.put("reGIR", reGIRProperties);
         metrics.put("executedDenoiserPasses", denoiserPasses);
         metrics.put("sceneLights", sceneLights);
@@ -1528,7 +1529,13 @@ final class ShaderGameTestReporter {
             record.put("history", reservoirSplattingHistory);
             record.put("roofColumns", snapshotRoofColumns());
             record.put("direct", captureLightingAttachment("di_output"));
-            record.put("filtered", captureLightingAttachment(denoiserPasses > 0 ? "denoise_result" : "diffuse_history"));
+            var filtered = captureLightingAttachment(denoiserPasses > 0 ? "denoise_result" : "diffuse_history");
+            record.put("filtered", filtered);
+            if (reservoirSplattingHistory.get("worldContentGeneration") instanceof Number generation
+                    && generation.longValue() == 0 && filtered.meanLuminance() > 1e-6) {
+                errors.add("Uninitialized voxel scene produced irradiance at startup tick " + tick
+                        + ": luminance=" + filtered.meanLuminance());
+            }
             startupFrames.add(record);
             Screenshot.takeScreenshot(client.getMainRenderTarget(), image -> client.execute(() -> {
                 try (image) {
