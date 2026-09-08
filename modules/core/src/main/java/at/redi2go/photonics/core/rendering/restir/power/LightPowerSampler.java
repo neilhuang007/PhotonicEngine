@@ -3,7 +3,7 @@ package at.redi2go.photonics.core.rendering.restir.power;
 import at.redi2go.photonics.api.gpu.buffers.IGpuBuffer;
 import at.redi2go.photonics.api.gpu.systems.IRenderSystem;
 import at.redi2go.photonics.core.iris.pipeline.buffer.IBufferHolder;
-import at.redi2go.photonics.core.iris.pipeline.rendering.IrisPipeline;
+import at.redi2go.photonics.core.iris.pipeline.IrisRenderer;
 import at.redi2go.photonics.core.rendering.RenderingComponent;
 import at.redi2go.photonics.core.rendering.lights.LocalLightCapacity;
 
@@ -59,8 +59,8 @@ public final class LightPowerSampler implements RenderingComponent {
      * Inserts the two dependent compute passes with explicit SSBO visibility
      * boundaries for the Power-RIS and ReGIR consumers that follow them.
      */
-    public IrisPipeline.Builder addPreparationPasses(
-            IrisPipeline.Builder builder,
+    public IrisRenderer.Builder addPreparationPasses(
+            IrisRenderer.Builder builder,
             BooleanSupplier condition
     ) {
         return builder

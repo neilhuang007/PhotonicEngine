@@ -110,7 +110,19 @@ class ReservoirSplattingBufferLayoutTest {
     void usesFalcorCompatiblePixelAndLinearSortDispatches() {
         assertEquals(16, ReservoirSplattingRendering.PIXEL_LOCAL_SIZE_X);
         assertEquals(16, ReservoirSplattingRendering.PIXEL_LOCAL_SIZE_Y);
-        assertEquals(1.0f / 16.0f, ReservoirSplattingRendering.FULL_VIEW_WIDTH_SCALE);
-        assertEquals(1.0f / 16.0f, ReservoirSplattingRendering.FULL_VIEW_HEIGHT_SCALE);
+        // Iris ComputeProgram.getWorkGroups interprets relative scales as
+        // invocation extents and divides by the shader's local size itself.
+        // Pre-dividing here silently dispatches only the lower-left 1/256.
+        for (float renderScale : new float[]{0.5f, 0.75f, 1.0f}) {
+            for (int extent : new int[]{480, 854, 1080, 1920}) {
+                int groupsX = (int) Math.ceil(Math.ceil(extent * renderScale * ReservoirSplattingRendering.FULL_VIEW_WIDTH_SCALE)
+                        / ReservoirSplattingRendering.PIXEL_LOCAL_SIZE_X);
+                int groupsY = (int) Math.ceil(Math.ceil(extent * renderScale * ReservoirSplattingRendering.FULL_VIEW_HEIGHT_SCALE)
+                        / ReservoirSplattingRendering.PIXEL_LOCAL_SIZE_Y);
+                int expectedGroups = ((int) Math.ceil(extent * renderScale) + 15) / 16;
+                assertEquals(expectedGroups, groupsX, "Iris dispatch must cover every horizontal pixel");
+                assertEquals(expectedGroups, groupsY, "Iris dispatch must cover every vertical pixel");
+            }
+        }
     }
 }

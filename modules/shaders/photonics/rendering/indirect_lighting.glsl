@@ -9,7 +9,7 @@
 //TODO: Make these into settings
 #define PH_MAX_GI_ITERATIONS 100
 
-#if defined NO_SHADOW_MAPPED
+#if defined NO_SHADOW_MAPPING
 #define should_trace_to_sun(rnd_state, bounce_count, surface_rt_pos, surface_normal, is_tracing_to_sun) \
     (bounce_count) > -1 && ph_rand_next_float(rnd_state) < 0.25f && dot(get_sun_direction(), (surface_normal)) >= 0.707f;
 #else
@@ -79,10 +79,12 @@ void sample_indirect(
     bool is_tracing_to_sun = false;
 
     RayIterator ray;
-
+    ray_iter_begin(ray, sample_rt_pos, next_gi_direction(
+            rnd_state, -1, sample_rt_pos, normal, is_tracing_to_sun));
     ray.iterations = PH_MAX_GI_ITERATIONS;
-    ray_iter_set_position(ray, sample_rt_pos);
-    prepare_next_gi_ray(ray, rnd_state, -1, sample_rt_pos, normal, is_tracing_to_sun);
+    // Exhaustion before a first hit must not export undefined geometry.
+    first_hit = sample_rt_pos;
+    first_normal = normal;
 
     for (int bounce = -1; bounce < PH_MAX_GI_BOUNCES; bounce++) {
         RayResult hit = ray_iter_next(ray);
@@ -172,7 +174,9 @@ void sample_indirect(
             );
 #endif
         } else { // Hit sky
-            vec3 player_pos = hit_position - rt_camera_position;
+            // A miss result has no position. Sky/fog sampling belongs at the
+            // ray's exit position, not at the voxel-world origin.
+            vec3 player_pos = ray.position - rt_camera_position;
             radiance_color = is_tracing_to_sun ? get_sun_color(player_pos, ray.direction) : get_sky_color(player_pos, ray.direction);
 
             if (bounce == -1) {

@@ -26,25 +26,25 @@ class ReservoirSplattingShaderRegressionTest {
     private static final String RECONNECTION_SHADER =
             "rendering/restir/reservoir_splatting/reconnection.glsl";
     private static final String INITIAL_DIRECT_SHADER =
-            "rendering/restir/passes/r2_initial_direct.fsh";
+            "rendering/restir/direct/passes/di0_initial_direct.fsh";
     private static final String DIRECT_RESERVOIR_SHADER =
             "rendering/restir/direct/reservoir.glsl";
     private static final String DIRECT_SAMPLE_SHADER =
             "rendering/restir/direct/sample.glsl";
     private static final String SPATIAL_REUSE_SHADER =
-            "rendering/restir/passes/r6_spatial_reuse.fsh";
+            "rendering/restir/direct/passes/di2_spatial_reuse.fsh";
     private static final String TEMPORAL_REUSE_PASS_SHADER =
-            "rendering/restir/passes/r5_temporal_reuse.fsh";
+            "rendering/restir/direct/passes/di1_temporal_reuse.fsh";
     private static final String RESOLVE_SHADER =
-            "rendering/restir/passes/r8_diffuse.fsh";
+            "rendering/restir/direct/passes/di3_validate_visibility.fsh";
     private static final String DENOISING_SHADER =
-            "rendering/restir/passes/r11_denoising.fsh";
+            "rendering/restir/svgf/passes/sv2_atrous.fsh";
     private static final String VARIANCE_PREFILTER_SHADER =
-            "rendering/restir/passes/r10_variance_prefilter.fsh";
+            "rendering/restir/svgf/passes/sv1_variance_prefilter.fsh";
     private static final String SVGF_SHADER =
-            "rendering/restir/svgf.glsl";
+            "rendering/restir/svgf/common.glsl";
     private static final String RESTIR_SHADER =
-            "rendering/restir/restir.glsl";
+            "rendering/restir/svgf/history.glsl";
     private static final String TEMPORAL_REUSE_SHADER =
             "rendering/restir/reservoir_splatting/temporal_reuse.glsl";
     private static final String SHIFT_SHADER =
@@ -54,7 +54,7 @@ class ReservoirSplattingShaderRegressionTest {
     private static final String FRAG_COMMON_SHADER =
             "rendering/frag/common.glsl";
     private static final String TRACING_SIMPLE_SHADER =
-            "internal/tracing/simple.glsl";
+            "internal/tracing/ph_simple.glsl";
 
     private static final Pattern INCLUDE =
             Pattern.compile("#include\\s+\"/photonics/([^\"]+)\"");
@@ -140,7 +140,7 @@ class ReservoirSplattingShaderRegressionTest {
         assertTrue(segmentTrace.contains(
                 "float maximum_hit_distance = 0.999f * target_distance;"
         ));
-        assertTrue(segmentTrace.contains("RayResult result = ray_iter_next(ray);"));
+        assertTrue(segmentTrace.contains("RayResult result = trace_opaque_camera_hit(ray);"));
         assertFalse(
                 segmentTrace.contains("ray_iter_next_block("),
                 "primary visibility must resolve partial-block geometry"
@@ -153,7 +153,7 @@ class ReservoirSplattingShaderRegressionTest {
         ));
         assertFalse(
                 segmentTrace.contains("ray_iter_skip_transparent("),
-                "Falcor primary visibility treats committed geometry as opaque"
+                "camera visibility must use the opaque-layer helper, not light attenuation"
         );
     }
 
@@ -183,7 +183,7 @@ class ReservoirSplattingShaderRegressionTest {
         Path root = findRepositoryRoot();
         String pipeline = Files.readString(root.resolve(
                 "modules/core/src/main/java/at/redi2go/photonics/core/" +
-                        "iris/extensions/RestirPipeline.java"
+                        "iris/rendering/restir/RestirPipeline.java"
         ));
         String reservoir = Files.readString(findShaderRoot().resolve(
                 DIRECT_RESERVOIR_SHADER
@@ -262,7 +262,6 @@ class ReservoirSplattingShaderRegressionTest {
         );
 
         for (String pass : new String[]{
-                "rendering/restir/passes/r3_validate_initial_direct.fsh",
                 TEMPORAL_REUSE_PASS_SHADER,
                 SPATIAL_REUSE_SHADER,
                 RESOLVE_SHADER
@@ -326,7 +325,7 @@ class ReservoirSplattingShaderRegressionTest {
                 "internal/tracing/types.glsl"
         ));
         String iterator = Files.readString(shaderRoot.resolve(
-                "internal/tracing/iterator.glsl"
+                "internal/tracing/ph_iterator.glsl"
         ));
 
         assertFalse(
@@ -339,6 +338,31 @@ class ReservoirSplattingShaderRegressionTest {
                 iterator.contains("uint64_t"),
                 "the sparse-tree traversal must not depend on int64 syntax"
         );
+    }
+
+    @Test
+    void engineTracingCannotSelectALegacyInt64IteratorOverride()
+            throws IOException {
+        String legacyIterator = """
+                const uint64_t zero_64 = uint64_t(0);
+                """;
+        String legacySimple = """
+                const uint64_t legacy_simple_requires_int64 = uint64_t(0);
+                """;
+        String source = new IncludeExpander(
+                findShaderRoot(),
+                Map.of(
+                        "internal/tracing/iterator.glsl", legacyIterator,
+                        "internal/tracing/simple.glsl", legacySimple
+                )
+        ).expand("tracing.glsl");
+
+        assertFalse(
+                source.contains("uint64_t"),
+                "engine-owned tracing must remain compatible when a native " +
+                        "pack contains obsolete int64 tracing helpers"
+        );
+        assertTrue(source.contains("trace_segment_visibility("));
     }
 
     @Test
@@ -491,7 +515,7 @@ class ReservoirSplattingShaderRegressionTest {
         ));
         assertTrue(temporal.contains("direct_reconnection_empty()"));
         assertTrue(spatial.contains("direct_reconnection_empty()"));
-        assertTrue(resolve.contains("if (!frag_is_in_world) {"));
+        assertTrue(resolve.indexOf("di_output = vec4(") < resolve.indexOf("if (frag_is_in_world) {"));
         assertTrue(resolve.contains("direct_reservoir_empty()"));
     }
 
@@ -502,7 +526,7 @@ class ReservoirSplattingShaderRegressionTest {
         ));
 
         assertTrue(source.contains("direct_reconnection_load_current("));
-        assertTrue(source.contains("direct_reconnection.integrand *"));
+        assertTrue(source.contains("reconnection.integrand *"));
         assertFalse(source.contains(
                 "lighting.rgb += direct_reservoir_get_final_color("
         ));
@@ -747,7 +771,14 @@ class ReservoirSplattingShaderRegressionTest {
         assertTrue(source.contains("confidenceCapViolationCount"));
         assertTrue(source.contains("relativeFrameLuminanceStdDev"));
         assertTrue(source.contains("relativeHalfLuminanceDrift"));
-        assertTrue(source.contains("TEST_RENDER_DISTANCE = 2"));
+        assertTrue(source.contains("MOVEMENT_CAPTURE_COUNT = 12"));
+        assertTrue(source.contains("movementLightingFrames"));
+        assertTrue(source.contains("lightingConsecutiveDeltas"));
+        assertTrue(source.contains(
+                "Did not capture all required incremental movement frames."
+        ));
+        assertFalse(source.contains("TEST_RENDER_DISTANCE = 2"),
+                "the harness must not silently shrink the loaded world to two chunks");
         assertTrue(source.contains("TEST_SIMULATION_DISTANCE = 5"));
         assertTrue(source.contains(
                 "reservoir.positiveTargetReservoirCount == 0"
@@ -760,18 +791,17 @@ class ReservoirSplattingShaderRegressionTest {
                         "                < " +
                         "MIN_STABLE_POSITIVE_TARGET_CONFIDENCE"
         ));
-        assertTrue(source.contains("lastDiscardedReason"));
+        assertTrue(source.contains("lastFlaggedReason"));
+        assertFalse(source.contains("if (activeStability.observe"),
+                "the report must retain every scheduled frame, including unstable ones");
         assertTrue(source.contains(
                 "REQUIRED_CONSECUTIVE_STABLE_SAMPLES = 3"
         ));
         assertTrue(source.contains(
-                "activeReadiness.shouldCapture(lighting, reservoir)"
+                "activeStability.observe(lighting, reservoir)"
         ));
-        assertTrue(source.contains(
-                "activeFrames.clear();\n" +
-                        "                    activeLightingFrames.clear();\n" +
-                        "                    activeReservoirFrames.clear();"
-        ));
+        assertFalse(source.contains("activeFrames.clear();"),
+                "unstable rendered frames must not be discarded to make the benchmark pass");
         assertTrue(source.contains(
                 "lightingStabilityFailure(\n" +
                         "                    chromaticityDistance,"
@@ -801,11 +831,9 @@ class ReservoirSplattingShaderRegressionTest {
         assertTrue(source.contains("smple.is_hand"));
         assertTrue(source.contains("center_sample.is_hand"));
         assertTrue(source.contains(
-                "//ph_required: uniform int atrous_iteration;"
+                "uniform int atrous_iteration;"
         ));
-        assertTrue(source.contains(
-                "//ph_required: uniform float near, far;"
-        ));
+        assertTrue(source.contains("/photonics/rendering/restir/common.glsl"));
         assertTrue(prefilter.contains("smple.is_hand = frag_is_hand;"));
         assertTrue(common.contains("value.y & ~SVGF_HAND_BIT"));
         assertTrue(common.contains("value.y & SVGF_HAND_BIT"));
@@ -816,39 +844,21 @@ class ReservoirSplattingShaderRegressionTest {
     }
 
     @Test
-    void denoiserSeparatesRequestedPassesFromMandatoryHandPasses()
-            throws IOException {
-        Path repositoryRoot = findRepositoryRoot();
-        String defines = Files.readString(repositoryRoot.resolve(
+    void denoiserHonorsRequestedPassesAndReadsTheFinalIteration() throws IOException {
+        Path root = findRepositoryRoot();
+        String pipeline = Files.readString(root.resolve(
                 "modules/core/src/main/java/at/redi2go/photonics/core/" +
-                        "iris/IrisDefines.java"
-        )).replace("\r\n", "\n");
-        String pipeline = Files.readString(repositoryRoot.resolve(
-                "modules/core/src/main/java/at/redi2go/photonics/core/" +
-                        "iris/extensions/RestirPipeline.java"
-        )).replace("\r\n", "\n");
-        String properties = Files.readString(repositoryRoot.resolve(
-                "modules/versions/1_21_11/common/src/main/mixins/" +
-                        "at/redi2go/photonics/common/mixins/iris/" +
-                        "ShaderPropertiesMixin.java"
-        )).replace("\r\n", "\n");
-
-        assertTrue(defines.contains(
-                "\"PH_RESTIR_DENOISER_PASSES\",\n" +
-                        "                requestedDenoiserPasses\n"
-        ));
-        assertFalse(defines.contains(
-                "Math.max(requestedDenoiserPasses, 7)"
-        ));
-        assertTrue(pipeline.contains(
-                "Math.max(requestedDenoiserPasses, 7)"
-        ));
-        assertTrue(properties.contains(
-                "e -> phProperties.restirDenoiserPasses = e"
-        ));
-        assertFalse(properties.contains(
-                "e == 0 ? 0 : Math.max(e, 7)"
-        ));
+                        "iris/rendering/restir/RestirPipeline.java"));
+        assertTrue(pipeline.contains("this.denoiserPasses = restirProperties.getDenoiserPasses();"));
+        assertFalse(pipeline.contains("Math.max(requestedDenoiserPasses, 7)"));
+        assertTrue(pipeline.contains(".repeat(denoiserPasses,"));
+        assertTrue(pipeline.contains("int index = i;"), "first atrous step must have radius one");
+        int undo = pipeline.indexOf(".deferredPass(\"undo exposure\"");
+        int flip = pipeline.lastIndexOf(".thenFlip(denoiseFramebuffer)", undo);
+        assertTrue(flip > pipeline.indexOf(".repeat(denoiserPasses,") && flip < undo);
+        String history = Files.readString(findShaderRoot().resolve(RESTIR_SHADER));
+        assertTrue(history.contains("history.lighting = vec4(smple.rgb / get_exposure(), 1.0f);"),
+                "zero denoising must expose the current raw estimator");
     }
 
     @Test
@@ -861,12 +871,12 @@ class ReservoirSplattingShaderRegressionTest {
         ));
 
         assertTrue(history.contains(
-                "abs(dot(distance_from_plane, frag_geo_normal)) > 0.25f"
+                "abs(dot(dist, frag_geo_normal)) > 0.25f"
         ));
-        assertTrue(history.contains("if (!sample_history_is_valid(history))"));
+        assertTrue(history.contains("if (!sample_history_is_valid(result)"));
         assertTrue(history.contains("weight_sum += weight;"));
-        assertTrue(history.contains("smple.lighting /= weight_sum;"));
-        assertTrue(history.contains("smple.variance /= weight_sum;"));
+        assertTrue(history.contains("temporal_history.lighting *= weight_sum;"));
+        assertTrue(history.contains("temporal_history.variance *= weight_sum;"));
         assertFalse(history.contains("block_divsor"));
 
         assertTrue(denoising.contains(

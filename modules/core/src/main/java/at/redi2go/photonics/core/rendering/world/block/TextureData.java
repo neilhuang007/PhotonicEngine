@@ -31,7 +31,7 @@ public record TextureData(
     }
 
     public int packedBlockId() {
-        return blockId | (lightTransmissive
+        return (blockId & BLOCK_ID_MASK) | (lightTransmissive
                 ? LIGHT_TRANSMISSIVE_BLOCK_ID_FLAG
                 : 0);
     }

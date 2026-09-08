@@ -1,52 +1,117 @@
 package at.redi2go.photonics.common.iris.pipeline.builder;
 
-import at.redi2go.photonics.common.iris.pipeline.IrisFactoryImpl;
 import at.redi2go.photonics.common.iris.pipeline.IrisPipelineImpl;
+import at.redi2go.photonics.common.iris.pipeline.IrisRendererImpl;
 import at.redi2go.photonics.common.iris.pipeline.impl.PipelineAction;
-import at.redi2go.photonics.core.iris.pipeline.rendering.IrisFactory;
-import at.redi2go.photonics.core.iris.pipeline.rendering.IrisPipeline;
+import at.redi2go.photonics.core.iris.pipeline.IrisPipeline;
+import at.redi2go.photonics.core.iris.pipeline.IrisRenderer;
+import at.redi2go.photonics.core.iris.pipeline.buffer.IBufferHolder;
+import at.redi2go.photonics.core.iris.pipeline.texture.ISamplerHolder;
 import at.redi2go.photonics.core.iris.pipeline.texture.IrisFramebuffer;
+import at.redi2go.photonics.core.iris.pipeline.uniform.IDynamicUniformHolder;
+import at.redi2go.photonics.core.iris.pipeline.uniform.IUniformHolder;
+import it.unimi.dsi.fastutil.ints.IntObjectBiConsumer;
+import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.Objects;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
-public class IrisPipelineBuilderImpl extends AbstractActionBuilderConsumer implements IrisPipeline.Builder {
+public class IrisPipelineBuilderImpl extends AbstractActionBuilderConsumer implements IrisRenderer.Builder {
     private @Nullable IrisFramebuffer framebuffer = null;
 
-    public IrisPipelineBuilderImpl(IrisFactoryImpl factory) {
+    private @NonNls String fragmentPrefix = "";
+    private @NonNls String vertexPrefix = "";
+
+    public IrisPipelineBuilderImpl(IrisPipelineImpl factory) {
         super(factory, "Photonics");
     }
 
-    private void scope(Consumer<IrisPipeline.Builder> builderAction) {
-        var oldFrameBuffer = framebuffer;
-        builderAction.accept(this);
-        framebuffer = oldFrameBuffer;
+    @Override
+    public IrisRenderer.Builder withBuffer(Consumer<IBufferHolder> consumer) {
+        factory.withBuffer(consumer);
+
+        return this;
     }
 
     @Override
-    public IrisPipeline.Builder debugGroup(String name) {
+    public IrisRenderer.Builder withSampler(Consumer<ISamplerHolder> consumer) {
+        factory.withSampler(consumer);
+
+        return this;
+    }
+
+    @Override
+    public IrisRenderer.Builder withDynamicUniform(Consumer<IDynamicUniformHolder> consumer) {
+        factory.withDynamicUniform(consumer);
+
+        return this;
+    }
+
+    @Override
+    public IrisRenderer.Builder withUniform(Consumer<IUniformHolder> consumer) {
+        factory.withUniform(consumer);
+
+        return this;
+    }
+
+    private void scope(Consumer<IrisRenderer.Builder> builderAction) {
+        var oldFrameBuffer = framebuffer;
+        var oldFragmentPrefix = fragmentPrefix;
+        var oldVertexPrefix = vertexPrefix;
+
+        builderAction.accept(this);
+
+        framebuffer = oldFrameBuffer;
+        fragmentPrefix = oldFragmentPrefix;
+        vertexPrefix = oldVertexPrefix;
+    }
+
+    @Override
+    public IrisRenderer.Builder withFragmentPrefix(@NonNls String prefix) {
+        Objects.requireNonNull(prefix, "fragment prefix was null");
+        fragmentPrefix = prefix;
+
+        return this;
+    }
+
+    @Override
+    public IrisRenderer.Builder withVertexPrefix(@NonNls String prefix) {
+        Objects.requireNonNull(prefix, "vertex prefix was null");
+        vertexPrefix = prefix;
+
+        return this;
+    }
+
+    @Override
+    public IrisRenderer.Builder debugGroup(String name) {
         addDebugGroup(name);
 
         return this;
     }
 
     @Override
-    public IrisPipeline.Builder withFramebuffer(IrisFramebuffer framebuffer) {
+    public IrisRenderer.Builder withFramebuffer(IrisFramebuffer framebuffer) {
         this.framebuffer = framebuffer;
         return this;
     }
 
     @Override
-    public IrisPipeline.Builder deferredPass(String name, @Nullable String fragmentShader, @Nullable String vertexShader) {
-        addDeferredPass(name, framebuffer, fragmentShader, vertexShader);
+    public IrisRenderer.Builder deferredPass(String name, @Nullable String fragmentShader, @Nullable String vertexShader) {
+        addDeferredPass(
+                name,
+                framebuffer,
+                fragmentShader != null ? fragmentPrefix + fragmentShader : null,
+                vertexShader != null ? vertexPrefix + vertexShader : null
+        );
 
         return this;
     }
 
     @Override
-    public IrisPipeline.Builder computePass(
+    public IrisRenderer.Builder computePass(
             String name,
             @Nullable String computeShader,
             int workGroupsX,
@@ -59,7 +124,7 @@ public class IrisPipelineBuilderImpl extends AbstractActionBuilderConsumer imple
     }
 
     @Override
-    public IrisPipeline.Builder relativeComputePass(
+    public IrisRenderer.Builder relativeComputePass(
             String name,
             @Nullable String computeShader,
             float widthScale,
@@ -71,37 +136,37 @@ public class IrisPipelineBuilderImpl extends AbstractActionBuilderConsumer imple
     }
 
     @Override
-    public IrisPipeline.Builder thenFlip(IrisFramebuffer... framebuffers) {
+    public IrisRenderer.Builder thenFlip(IrisFramebuffer... framebuffers) {
         addThenFlip(framebuffers);
 
         return this;
     }
 
     @Override
-    public IrisPipeline.Builder thenRun(Runnable action) {
+    public IrisRenderer.Builder thenRun(Runnable action) {
         addThenRun(action);
 
         return this;
     }
 
     @Override
-    public IrisPipeline.Builder thenShaderStorageBarrier() {
+    public IrisRenderer.Builder thenShaderStorageBarrier() {
         addShaderStorageBarrier();
 
         return this;
     }
 
-    @Override
-    public IrisPipeline.Builder repeat(int n, Consumer<IrisPipeline.Builder> builderAction) {
-        addBeginRepeating(n);
-        scope(builderAction);
-        addEndRepeating();
+    public IrisRenderer.Builder repeat(int n, IntObjectBiConsumer<IrisRenderer.Builder> builderAction) {
+        for (int i = 0; i < n; i++) {
+            final int index = i;
+            scope((b0) -> builderAction.accept(index, b0));
+        }
 
         return this;
     }
 
     @Override
-    public IrisPipeline.Builder when(BooleanSupplier condition, Consumer<IrisPipeline.Builder> builderAction) {
+    public IrisRenderer.Builder when(BooleanSupplier condition, Consumer<IrisRenderer.Builder> builderAction) {
         if (condition.getAsBoolean())
             scope(builderAction);
 
@@ -109,8 +174,8 @@ public class IrisPipelineBuilderImpl extends AbstractActionBuilderConsumer imple
     }
 
     @Override
-    public IrisPipeline build(Function<IrisPipeline, IrisPipeline> registration) {
-        return registration.apply(new IrisPipelineImpl(buildActions()));
+    public IrisRenderer build(Function<IrisRenderer, IrisRenderer> registration) {
+        return registration.apply(new IrisRendererImpl(buildActions()));
     }
 
     @Override

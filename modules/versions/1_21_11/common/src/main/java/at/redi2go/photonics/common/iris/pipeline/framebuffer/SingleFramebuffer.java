@@ -10,14 +10,19 @@ import org.joml.Vector2i;
 import org.joml.Vector2ic;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL30;
+import org.lwjgl.opengl.GL20;
+import org.lwjgl.opengl.GL43;
 
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 
 public class SingleFramebuffer extends GlFramebuffer implements InternalIrisFramebuffer {
     private List<FramebufferAttachment> attachments;
 
     private final FramebufferSize sizeSupplier;
     private final Vector2i currentSize;
+    private final Map<Integer, int[]> programDrawBuffers = new HashMap<>();
 
     public SingleFramebuffer(
             List<FramebufferAttachment> attachments,
@@ -54,6 +59,29 @@ public class SingleFramebuffer extends GlFramebuffer implements InternalIrisFram
     public void bind() {
         recalculateSizes();
         super.bind();
+        // An output not declared by the active fragment shader is undefined,
+        // not a request to preserve the corresponding attachment. In particular
+        // candidate/temporal passes must not overwrite reservoirs they sample.
+        int program = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
+        if (program != 0) {
+            IrisRenderSystem.drawBuffers(getGlId(), programDrawBuffers.computeIfAbsent(
+                    program, this::findProgramDrawBuffers));
+        }
+    }
+
+    private int[] findProgramDrawBuffers(int program) {
+        int[] buffers = new int[attachments.size()]; // GL_NONE for unwritten lanes
+        int outputs = GL43.glGetProgramInterfacei(program, GL43.GL_PROGRAM_OUTPUT, GL43.GL_ACTIVE_RESOURCES);
+        for (int index = 0; index < outputs; index++) {
+            int[] values = new int[2];
+            GL43.glGetProgramResourceiv(program, GL43.GL_PROGRAM_OUTPUT, index,
+                    new int[]{GL43.GL_LOCATION, GL43.GL_ARRAY_SIZE}, null, values);
+            for (int element = 0; values[0] >= 0 && element < values[1]; element++) {
+                int location = values[0] + element;
+                if (location < buffers.length) buffers[location] = GL30.GL_COLOR_ATTACHMENT0 + location;
+            }
+        }
+        return buffers;
     }
 
     @Override

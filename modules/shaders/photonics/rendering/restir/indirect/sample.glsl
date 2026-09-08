@@ -52,23 +52,43 @@ void indirect_sample_set_hit_point(
     smple.hit_point -= rt_camera_position;
 }
 
-float indirect_sample_compute_jacobian(IndirectSample smple, vec3 dst_pos, vec3 src_pos) {
-    vec3 hit_position = indirect_sample_get_hit_point(smple);
 
-    vec3 to_current = dst_pos - hit_position;
-    vec3 to_source  = src_pos - hit_position;
-
-    float to_current_sq = dot(to_current, to_current);
-    float to_source_sq = dot(to_source, to_source);
-
-    vec3 hit_normal = indirect_sample_get_hit_normal(smple);
-
-    float jacobian = (dot(hit_normal, to_current * inversesqrt(to_current_sq)) / to_current_sq);
-    jacobian /= (dot(hit_normal, to_source * inversesqrt(to_source_sq)) / to_source_sq);
-
-    return isinf(jacobian) || isnan(jacobian) ? 0.0f : clamp(jacobian, 0.0f, 3.0f);
+float indirect_sample_weight(IndirectSample smple) {
+    return ph_luminance(smple.color);
 }
 
-float indirect_sample_compute_shift(IndirectSample smple, vec3 dst_pos, vec3 src_pos) {
-    return indirect_sample_compute_jacobian(smple, dst_pos, src_pos);
+float indirect_sample_compute_jacobian(IndirectSample smple, FragData src_frag) {
+    #define dst_pos frag_player_pos
+    #define dst_geo_normal frag_geo_normal
+    #define dst_tex_normal frag_tex_normal
+
+    #define src_pos frag_data_player_pos(src_frag)
+    #define src_geo_normal frag_data_geo_normal(src_frag)
+    #define src_tex_normal frag_data_tex_normal(src_frag)
+
+    #define hit_pos smple.hit_point
+    #define hit_normal indirect_sample_get_hit_normal(smple)
+
+    vec3 to_dst = hit_pos - dst_pos;
+    float to_dst_sq = dot(to_dst, to_dst);
+    float to_dst_inv = inversesqrt(to_dst_sq);
+
+    float jacobian     = dot(hit_normal, to_dst * to_dst_inv) / to_dst_sq;
+    float normal_shift = dot(dst_tex_normal, -to_dst * to_dst_inv) / dot(dst_geo_normal, -to_dst * to_dst_inv);
+
+    vec3 to_src = hit_pos - src_pos;
+    float to_src_sq = dot(to_src, to_src);
+    float to_src_inv = inversesqrt(to_src_sq);
+
+    jacobian     /= dot(hit_normal, to_src * inversesqrt(to_src_sq)) / to_src_sq;
+    normal_shift /= dot(src_tex_normal, -to_src * to_src_inv) / dot(src_geo_normal, -to_src * to_src_inv);
+
+    return jacobian * normal_shift;
+
+    #undef dst_pos
+    #undef dst_tex_normal
+    #undef src_pos
+    #undef src_tex_normal
+    #undef hit_pos
+    #undef hit_normal
 }

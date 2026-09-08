@@ -5,7 +5,7 @@ import at.redi2go.photonics.api.gpu.buffers.heap.IGpuBufferHeap;
 import at.redi2go.photonics.api.gpu.buffers.heap.MemoryView;
 import at.redi2go.photonics.api.gpu.systems.IGpuDevice;
 import at.redi2go.photonics.api.gpu.systems.IRenderSystem;
-import at.redi2go.photonics.api.shaders.PhotonicsProperties;
+import at.redi2go.photonics.core.iris.rendering.restir.ReGIRProperties;
 import at.redi2go.photonics.core.Photonics;
 import at.redi2go.photonics.core.iris.pipeline.buffer.IBufferHolder;
 import at.redi2go.photonics.core.rendering.RenderingComponent;
@@ -24,7 +24,7 @@ public final class ReGIRRendering implements RenderingComponent {
     private final IGpuBuffer risBuffer;
     private boolean parameterUploadPending = true;
 
-    public ReGIRRendering(PhotonicsProperties properties) {
+    public ReGIRRendering(ReGIRProperties properties) {
         IGpuDevice device = IRenderSystem.getDevice();
         this.context = new ReGIRContext(
                 ReGIRConfiguration.from(properties),

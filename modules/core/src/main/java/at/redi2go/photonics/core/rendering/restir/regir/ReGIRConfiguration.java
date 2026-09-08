@@ -1,6 +1,6 @@
 package at.redi2go.photonics.core.rendering.restir.regir;
 
-import at.redi2go.photonics.api.shaders.PhotonicsProperties;
+import at.redi2go.photonics.core.iris.rendering.restir.ReGIRProperties;
 import at.redi2go.photonics.api.shaders.ReGIRLocalLightFallbackMode;
 import at.redi2go.photonics.api.shaders.ReGIRLocalLightPresamplingMode;
 import at.redi2go.photonics.api.shaders.ReGIRMode;
@@ -63,7 +63,7 @@ public record ReGIRConfiguration(
         }
     }
 
-    public static ReGIRConfiguration from(PhotonicsProperties properties) {
+    public static ReGIRConfiguration from(ReGIRProperties properties) {
         return new ReGIRConfiguration(
                 properties.getReGIRMode(),
                 properties.getReGIRLocalLightPresamplingMode(),

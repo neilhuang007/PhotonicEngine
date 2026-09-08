@@ -1,6 +1,7 @@
 #include "/photonics/rendering/frag/world_interface.glsl"
 #include "/photonics/utility/normal_encoding.glsl"
 #include "/photonics/rendering/frag/frag_data.glsl"
+#include "/photonics/rendering/frag/depth.glsl"
 #include "/photonics/utility/random.glsl"
 
 #define frag_tex_coord ivec2(gl_FragCoord.xy)
@@ -10,11 +11,7 @@ uint frag_rnd_state = 0u;
 
 FragData _frag_data;
 
-#if defined FRAG_USE_PLAYER_POS
-vec3 frag_player_pos;
-#else
 #define frag_player_pos frag_data_player_pos(_frag_data)
-#endif
 
 #if defined FRAG_USE_RT_POS
 vec3 frag_rt_pos;
@@ -48,10 +45,6 @@ void setup_frag_data(int rnd_seed) {
     );
     frag_data_load(_frag_data, frag_tex_coord);
 
-#if defined FRAG_USE_PLAYER_POS
-    frag_player_pos = frag_data_player_pos(_frag_data);
-#endif
-
 #if defined FRAG_USE_RT_POS
     frag_rt_pos = frag_data_rt_pos(_frag_data);
 #endif
@@ -65,8 +58,9 @@ void setup_frag_data(int rnd_seed) {
 #endif
 }
 
-//ph_required: uniform sampler2D ph_prev_exposure;
+//ph_required: uniform sampler2D prev_exposure;
 
+// Deprecated: Remove for 0.4 release
 #if !defined PH_EXPOSURE_ADJUSTMENT
 float get_exposure() {
     return 1.0f;
@@ -74,5 +68,5 @@ float get_exposure() {
 #endif
 
 float get_previous_exposure() {
-    return frameCounter == 0 ? 1.0f : texelFetch(ph_prev_exposure, ivec2(0), 0).r;
+    return frameCounter == 0 ? 1.0f : texelFetch(prev_exposure, ivec2(0), 0).r;
 }

@@ -14,7 +14,7 @@ class RestirPipelineLifecycleTest {
             throws IOException {
         String source = Files.readString(findRepositoryRoot().resolve(
                 "modules/core/src/main/java/at/redi2go/photonics/core/" +
-                        "iris/extensions/RestirPipeline.java"
+                        "iris/rendering/restir/RestirPipeline.java"
         ));
 
         int constructor = source.indexOf(
@@ -22,9 +22,10 @@ class RestirPipelineLifecycleTest {
         );
         assertTrue(constructor >= 0, "reservoir splatting construction is missing");
 
-        int guard = source.lastIndexOf("if (isBlockLightEnabled())", constructor);
+        int method = source.indexOf("private void restirDiPipeline(");
+        int guard = source.indexOf("if (!isBlockLightEnabled()) return;", method);
         assertTrue(
-                guard >= 0 && isInsideBlock(source, guard, constructor),
+                method >= 0 && guard > method && guard < constructor && isInsideBlock(source, method, constructor),
                 "reservoir splatting owns direct block-light SSBOs and must not " +
                         "be constructed when PH_ENABLE_BLOCKLIGHT is disabled"
         );
@@ -40,7 +41,7 @@ class RestirPipelineLifecycleTest {
         ));
 
         int addPasses = source.indexOf(
-                "public IrisPipeline.Builder addPasses("
+                "public IrisRenderer.Builder addPasses("
         );
         int clear = source.indexOf("CLEAR_SHADER", addPasses);
         int clearBarrier = source.indexOf(
@@ -85,12 +86,12 @@ class RestirPipelineLifecycleTest {
             throws IOException {
         String source = Files.readString(findRepositoryRoot().resolve(
                 "modules/core/src/main/java/at/redi2go/photonics/core/" +
-                        "iris/extensions/RestirPipeline.java"
+                        "iris/rendering/restir/RestirPipeline.java"
         ));
 
-        int temporal = source.indexOf(".deferredPass(\"temporal reuse\"");
+        int temporal = source.indexOf(".deferredPass(\"temporal splatting\"");
         int temporalBarrier = source.indexOf(
-                ".thenShaderStorageBarrier(this::isBlockLightEnabled)",
+                ".thenShaderStorageBarrier()",
                 temporal
         );
         int spatial = source.indexOf(".deferredPass(\"spatial reuse\"", temporal);
@@ -98,7 +99,7 @@ class RestirPipelineLifecycleTest {
                 ".thenShaderStorageBarrier(",
                 spatial
         );
-        int resolve = source.indexOf(".deferredPass(\"diffuse\"", spatial);
+        int resolve = source.indexOf(".deferredPass(\"resolve direct\"", spatial);
 
         assertTrue(temporal >= 0 && temporalBarrier > temporal);
         assertTrue(spatial > temporalBarrier);
@@ -129,7 +130,7 @@ class RestirPipelineLifecycleTest {
 
         String pipeline = Files.readString(root.resolve(
                 "modules/core/src/main/java/at/redi2go/photonics/core/" +
-                        "iris/extensions/RestirPipeline.java"
+                        "iris/rendering/restir/RestirPipeline.java"
         ));
         int regir = pipeline.indexOf("ReGIRRendering.BUILD_SHADER");
         int regirBarrier = pipeline.indexOf(
@@ -183,7 +184,7 @@ class RestirPipelineLifecycleTest {
         Path root = findRepositoryRoot();
         String pipeline = Files.readString(root.resolve(
                 "modules/core/src/main/java/at/redi2go/photonics/core/" +
-                        "iris/extensions/RestirPipeline.java"
+                        "iris/rendering/restir/RestirPipeline.java"
         ));
         String lifecycle = Files.readString(root.resolve(
                 "modules/core/src/main/java/at/redi2go/photonics/core/" +
@@ -192,7 +193,7 @@ class RestirPipelineLifecycleTest {
         ));
         String extension = Files.readString(root.resolve(
                 "modules/core/src/main/java/at/redi2go/photonics/core/" +
-                        "iris/AbstractPhotonicsExtension.java"
+                        "iris/rendering/PhotonicsPipeline.java"
         ));
         String componentLifecycle = Files.readString(root.resolve(
                 "modules/core/src/main/java/at/redi2go/photonics/core/" +

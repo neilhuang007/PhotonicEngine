@@ -8,6 +8,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TextureDataTest {
     @Test
+    void unmappedBlockIdCannotSetTheTransmissionMetadataBit() {
+        TextureData opaque = new TextureData(-1, VoxelColor.WHITE, 0, 0, false);
+        TextureData glass = opaque.withLightTransmissive(true);
+        assertEquals(0, opaque.packedBlockId() & TextureData.LIGHT_TRANSMISSIVE_BLOCK_ID_FLAG);
+        assertEquals(TextureData.BLOCK_ID_MASK, opaque.packedBlockId());
+        assertEquals(TextureData.LIGHT_TRANSMISSIVE_BLOCK_ID_FLAG,
+                glass.packedBlockId() & TextureData.LIGHT_TRANSMISSIVE_BLOCK_ID_FLAG);
+        assertEquals(TextureData.BLOCK_ID_MASK, glass.packedBlockId() & TextureData.BLOCK_ID_MASK);
+    }
+
+    @Test
     void packedBlockIdCarriesLightTransmissionWithoutChangingBlockId() {
         TextureData data = new TextureData(
                 42,

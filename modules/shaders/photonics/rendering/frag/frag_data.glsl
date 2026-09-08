@@ -1,8 +1,8 @@
-//ph_required: uniform sampler2D ph_frag_data0;
-//ph_required: uniform usampler2D ph_frag_data1;
+uniform sampler2D frag_data0;
+uniform usampler2D frag_data1;
 
-//ph_required: uniform sampler2D prev_ph_frag_data0;
-//ph_required: uniform usampler2D prev_ph_frag_data1;
+uniform sampler2D prev_frag_data0;
+uniform usampler2D prev_frag_data1;
 
 #include "/photonics/utility/normal_encoding.glsl"
 #include "/photonics/rendering/frag/flags.glsl"
@@ -13,26 +13,27 @@ struct FragData {
 };
 
 void frag_data_load(out FragData frag, ivec2 texel) {
-    frag.data0 = texelFetch(ph_frag_data0, texel, 0);
-    frag.data1 = texelFetch(ph_frag_data1, texel, 0);
+    frag.data0 = texelFetch(frag_data0, texel, 0);
+    frag.data1 = texelFetch(frag_data1, texel, 0);
 }
 
 void frag_data_load_previous(out FragData frag, ivec2 texel) {
-    frag.data0 = texelFetch(prev_ph_frag_data0, texel, 0);
-    frag.data1 = texelFetch(prev_ph_frag_data1, texel, 0);
+    frag.data0 = texelFetch(prev_frag_data0, texel, 0);
+    frag.data1 = texelFetch(prev_frag_data1, texel, 0);
 
     vec3 camera_offset = cameraPosition - previousCameraPosition;
-    frag.data0.xyz -= camera_offset;
+    if ((frag.data1.w & frag_is_hand_bit) == 0u)
+        frag.data0.xyz -= camera_offset;
 }
 
 vec3 frag_data_load_geo_normal(ivec2 texel) {
-    uint normal_data = texelFetch(ph_frag_data1, texel, 0).y;
-    return ph_decode_normal(unpackSnorm2x16(normal_data));
+    uint normal_data = texelFetch(frag_data1, texel, 0).y;
+    return ph_unpack_normal(normal_data);
 }
 
 vec3 frag_data_load_tex_normal(ivec2 texel) {
-    uint normal_data = texelFetch(ph_frag_data1, texel, 0).z;
-    return ph_decode_normal(unpackSnorm2x16(normal_data));
+    uint normal_data = texelFetch(frag_data1, texel, 0).z;
+    return ph_unpack_normal(normal_data);
 }
 
 vec3 frag_data_player_pos(FragData frag) {

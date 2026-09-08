@@ -65,9 +65,9 @@ public class WorldOrigin extends Vector3d {
         int renderDistance = Minecraft.getRenderDistance() + 2;
 
         return new Vector3i(
-                snapToSectionPos((int) cameraPos.x, renderDistance),
-                snapToSectionPos((int) cameraPos.y, renderDistance),
-                snapToSectionPos((int) cameraPos.z, renderDistance)
+                snapToSectionPos((int) Math.floor(cameraPos.x), renderDistance),
+                snapToSectionPos((int) Math.floor(cameraPos.y), renderDistance),
+                snapToSectionPos((int) Math.floor(cameraPos.z), renderDistance)
         );
     }
 

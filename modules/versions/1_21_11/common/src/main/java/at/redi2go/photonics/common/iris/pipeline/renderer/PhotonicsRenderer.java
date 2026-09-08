@@ -70,8 +70,11 @@ public class PhotonicsRenderer extends CompositeRenderer {
 
         this.name = name;
         for (CompositeRendererPassExt pass : getPasses()) {
-            var sourcePass = passes.get(pass.index());
-            if (sourcePass instanceof DeferredIrisRenderer.DeferredPass deferredPass)
+            var definition = passes.get(pass.getIndex());
+
+            pass.setDebugName(definition.name());
+            pass.setActions(definition.actions());
+            if (definition instanceof DeferredIrisRenderer.DeferredPass deferredPass)
                 pass.setFramebuffer(deferredPass.framebuffer());
         }
     }

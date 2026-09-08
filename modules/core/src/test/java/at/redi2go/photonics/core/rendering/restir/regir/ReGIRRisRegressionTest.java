@@ -26,7 +26,7 @@ class ReGIRRisRegressionTest {
             throws IOException {
         String build = readShader("rendering/restir/regir/passes/build.csh");
         String sampling = readShader("rendering/restir/regir/sampling.glsl");
-        String initial = readShader("rendering/restir/passes/r2_initial_direct.fsh");
+        String initial = readShader("rendering/restir/direct/passes/di0_initial_direct.fsh");
         String sample = readShader("rendering/restir/direct/sample.glsl");
         String reservoir = readShader("rendering/restir/direct/reservoir.glsl");
 
@@ -67,8 +67,8 @@ class ReGIRRisRegressionTest {
     @Test
     void stationaryTemporalReuseDoesNotDarkenAStableNearSourceEstimate()
             throws IOException {
-        String initial = readShader("rendering/restir/passes/r2_initial_direct.fsh");
-        String temporal = readShader("rendering/restir/passes/r5_temporal_reuse.fsh");
+        String initial = readShader("rendering/restir/direct/passes/di0_initial_direct.fsh");
+        String temporal = readShader("rendering/restir/direct/passes/di1_temporal_reuse.fsh");
         String splatting = readShader(
                 "rendering/restir/reservoir_splatting/temporal_reuse.glsl"
         );

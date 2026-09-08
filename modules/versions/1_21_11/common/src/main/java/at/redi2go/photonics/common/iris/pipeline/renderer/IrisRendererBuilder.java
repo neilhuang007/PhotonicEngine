@@ -1,6 +1,7 @@
 package at.redi2go.photonics.common.iris.pipeline.renderer;
 
 import at.redi2go.photonics.common.iris.pipeline.builder.PipelineActionBuilder;
+import at.redi2go.photonics.core.iris.rendering.Pipelines;
 import at.redi2go.photonics.core.iris.pipeline.texture.IrisFramebuffer;
 import org.jetbrains.annotations.Nullable;
 
@@ -42,8 +43,9 @@ public class IrisRendererBuilder implements PipelineActionBuilder {
                 new DeferredIrisRenderer.DeferredPass(
                         name,
                         fragmentShader,
-                        vertexShader == null ? "/photonics/rendering/screen.vsh" : vertexShader,
-                        framebuffer
+                        vertexShader == null ? Pipelines.DEFAULT_VERTEX_SHADER : vertexShader,
+                        framebuffer,
+                        new ArrayList<>()
                 )
         );
 
@@ -66,9 +68,23 @@ public class IrisRendererBuilder implements PipelineActionBuilder {
                         computeShader,
                         workGroupsX,
                         workGroupsY,
-                        workGroupsZ
+                        workGroupsZ,
+                        new ArrayList<>()
                 )
         );
+
+        return true;
+    }
+
+    @Override
+    public boolean addThenFlip(IrisFramebuffer... framebuffers) {
+        if (finished) return false;
+        if (passes.isEmpty()) return false;
+
+        passes.getLast().actions().add(() -> {
+            for (var framebuffer : framebuffers)
+                framebuffer.flip();
+        });
 
         return true;
     }
@@ -87,11 +103,27 @@ public class IrisRendererBuilder implements PipelineActionBuilder {
                         name,
                         computeShader,
                         widthScale,
-                        heightScale
+                        heightScale,
+                        new ArrayList<>()
                 )
         );
 
         return true;
+    }
+
+    @Override
+    public boolean addThenRun(Runnable action) {
+        if (finished) return false;
+        if (passes.isEmpty()) return false;
+
+        passes.getLast().actions().add(action);
+
+        return true;
+    }
+
+    @Override
+    public boolean addShaderStorageBarrier() {
+        return addThenRun(at.redi2go.photonics.common.iris.pipeline.builder.actions.ShaderStorageBarrierAction.INSTANCE::execute);
     }
 
     public IrisRenderer buildAction() {

@@ -1,14 +1,16 @@
 package at.redi2go.photonics.client;
 
 import at.redi2go.photonics.api.gpu.textures.IGpuTexture2D;
-import at.redi2go.photonics.api.shaders.AlphaMode;
-import at.redi2go.photonics.api.shaders.IShaderPack;
-import at.redi2go.photonics.api.shaders.LightingMode;
+import at.redi2go.photonics.core.TransparencyMode;
+import at.redi2go.photonics.core.iris.IrisPack;
+import at.redi2go.photonics.core.iris.IrisManager;
+import at.redi2go.photonics.core.iris.rendering.restir.RestirProperties;
+import at.redi2go.photonics.core.iris.rendering.PhotonicsRenderer;
 import at.redi2go.photonics.common.iris.IrisUtil;
 import at.redi2go.photonics.common.iris.pipeline.framebuffer.FlippableFramebuffer;
 import at.redi2go.photonics.common.iris.pipeline.renderer.DeferredIrisRenderer;
 import at.redi2go.photonics.core.Photonics;
-import at.redi2go.photonics.core.iris.extensions.RestirPipeline;
+import at.redi2go.photonics.core.iris.rendering.restir.RestirPipeline;
 import at.redi2go.photonics.core.rendering.restir.splatting.ReservoirSplattingRendering;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -22,6 +24,7 @@ import net.minecraft.client.Screenshot;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.util.ARGB;
 import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL30;
 import org.lwjgl.opengl.GL42;
 import org.lwjgl.opengl.GL45;
 import org.lwjgl.system.MemoryUtil;
@@ -55,23 +58,25 @@ final class ShaderGameTestReporter {
             .create();
 
     private static final int REQUIRED_FRAMES_PER_CAMERA = 6;
+    private static final int MOVEMENT_CAPTURE_COUNT = 12;
     private static final int INITIAL_SETTLE_TICKS = 240;
     private static final int MOVED_SETTLE_TICKS = 100;
     private static final int CAPTURE_SPACING_TICKS = 4;
-    private static final int TEST_RENDER_DISTANCE = 2;
     private static final int TEST_SIMULATION_DISTANCE = 5;
     private static final int EXPECTED_SPATIAL_REUSE_SAMPLES = 4;
-    private static final int EXPECTED_RESTIR_DENOISER_PASSES = 0;
+    // Shrimple-ph-0.4 publishes this as a fixed shader-pack property.
+    private static final int EXPECTED_RESTIR_DENOISER_PASSES = 4;
     private static final int MAX_INACTIVE_PIPELINE_RELOAD_TICKS = 40;
     private static final int REQUIRED_CONSECUTIVE_STABLE_SAMPLES = 3;
     private static final Duration REPORT_TIMEOUT = Duration.ofMinutes(3);
-    private static final double CAMERA_TRANSLATION_BLOCKS = 0.35;
+    private static final double CAMERA_TRANSLATION_BLOCKS = 1.5;
     private static final double MIN_MEAN_LUMINANCE = 0.01;
     private static final double MIN_NONZERO_PIXEL_FRACTION = 0.20;
     private static final double MAX_MEAN_LUMINANCE = 0.80;
     private static final double MAX_P95_LUMINANCE = 0.985;
     private static final double MAX_SATURATED_PIXEL_FRACTION = 0.12;
-    private static final double MIN_MIDTONE_PIXEL_FRACTION = 0.005;
+    // This fixture is a lit test room, not an intentionally black scene.
+    private static final double MIN_MIDTONE_PIXEL_FRACTION = 0.2;
     private static final double SATURATED_LUMINANCE = 0.98;
     private static final double MAX_CAMERA_CHROMATICITY_DISTANCE = 0.035;
     private static final double MAX_FRAME_CHROMATICITY_DISTANCE = 0.04;
@@ -80,6 +85,8 @@ final class ShaderGameTestReporter {
     private static final double MIN_LIGHTING_FINITE_PIXEL_FRACTION = 1.0;
     private static final double MAX_LIGHTING_CAMERA_CHROMATICITY_DISTANCE = 0.035;
     private static final double MAX_LIGHTING_FRAME_CHROMATICITY_DISTANCE = 0.04;
+    private static final double MAX_MOVEMENT_CHROMATICITY_DELTA = 0.20;
+    private static final double MAX_MOVEMENT_RELATIVE_LUMINANCE_DELTA = 2.0;
     private static final double MAX_RELATIVE_FRAME_LUMINANCE_STDDEV = 0.50;
     private static final double MAX_RELATIVE_HALF_LUMINANCE_DRIFT = 0.50;
     private static final double MAX_READINESS_RELATIVE_LUMINANCE_CHANGE =
@@ -110,12 +117,37 @@ final class ShaderGameTestReporter {
             new ArrayList<>();
     private final List<ReservoirFrameMetrics> cameraBReservoirFrames =
             new ArrayList<>();
+    private final List<FrameMetrics> movementFrames = new ArrayList<>();
+    private final List<LightingFrameMetrics> movementLightingFrames =
+            new ArrayList<>();
+    private final List<LightingFrameMetrics> handheldFrames = new ArrayList<>();
+    private final List<LightingFrameMetrics> finalLightingFrames = new ArrayList<>();
+    private final List<LightingFrameMetrics> indirectLightingFrames = new ArrayList<>();
+    private int previousHotbarSlot = -1;
+    private final int diagnosticHotbarSlot = Integer.getInteger("photonicengine.shaderGameTest.hotbarSlot", -1);
+    private final List<ReservoirFrameMetrics> movementReservoirFrames =
+            new ArrayList<>();
 
     private CameraState cameraA;
+    private CameraState originalCamera;
     private CameraState cameraB;
+    private List<Map<String, Object>> sceneLights = List.of();
+    private final List<Map<String, Object>> captureSceneStates = new ArrayList<>();
+    private boolean pixelPackIsolationVerified;
+    private List<Map<String, Object>> tracedLights = List.of();
+    private List<Map<String, Object>> nativeLightTable = List.of();
+    private List<Map<String, Object>> primarySurfaceProbes = List.of();
+    private final Map<String, Object> lightProbes = new LinkedHashMap<>();
+    private final Map<String, Object> sceneRayProbes = new LinkedHashMap<>();
+    private final Map<String, List<Object>> lightingProbeSeries = new LinkedHashMap<>();
+    private final List<Map<String, Object>> startupFrames = new ArrayList<>();
+    private List<Map<String, Object>> roofColumns = List.of();
+    private String diagnosticCaptureLabel;
     private String pipelineClass = "";
     private String extensionClass = "";
     private String shaderPack = "";
+    private String shaderPackSha256 = "";
+    private Map<String, Object> reGIRProperties = Map.of();
     private Map<String, String> shaderPackSettings = Map.of();
     private Map<String, Object> shaderPackProperties = Map.of();
     private Map<String, Object> reservoirSplattingHistory = Map.of();
@@ -124,16 +156,19 @@ final class ShaderGameTestReporter {
     private int denoiserPasses = -1;
     private int settleTicks;
     private int captureSpacingTicks;
-    private final CaptureReadiness cameraAReadiness =
-            new CaptureReadiness();
-    private final CaptureReadiness cameraBReadiness =
-            new CaptureReadiness();
+    private final CaptureStability cameraAStability =
+            new CaptureStability();
+    private final CaptureStability cameraBStability =
+            new CaptureStability();
     private boolean serverDistanceApplied;
+    private final boolean freezeTicks = Boolean.getBoolean("photonicengine.shaderGameTest.freezeTicks");
+    private boolean previousTicksFrozen;
     private boolean movedCamera;
     private boolean captureInFlight;
     private boolean focusPauseDisabled;
     private boolean previousPauseOnLostFocus;
     private int previousRenderDistance;
+    private int testRenderDistance;
     private int previousSimulationDistance;
     private boolean finished;
 
@@ -168,10 +203,11 @@ final class ShaderGameTestReporter {
         if (!focusPauseDisabled) {
             previousPauseOnLostFocus = client.options.pauseOnLostFocus;
             previousRenderDistance = client.options.renderDistance().get();
+            testRenderDistance = Integer.getInteger("photonicengine.shaderGameTest.renderDistance", previousRenderDistance);
             previousSimulationDistance =
                     client.options.simulationDistance().get();
             client.options.pauseOnLostFocus = false;
-            client.options.renderDistance().set(TEST_RENDER_DISTANCE);
+            client.options.renderDistance().set(testRenderDistance);
             client.options.simulationDistance().set(
                     TEST_SIMULATION_DISTANCE
             );
@@ -186,11 +222,17 @@ final class ShaderGameTestReporter {
             }
 
             LocalPlayer player = client.player;
+            if (player != null && diagnosticHotbarSlot >= 0 && diagnosticHotbarSlot < 9 && previousHotbarSlot < 0) {
+                previousHotbarSlot = player.getInventory().getSelectedSlot();
+                player.getInventory().setSelectedSlot(diagnosticHotbarSlot);
+            }
             var singleplayerServer = client.getSingleplayerServer();
             if (!serverDistanceApplied && singleplayerServer != null) {
                 singleplayerServer.execute(() -> {
+                    previousTicksFrozen = singleplayerServer.tickRateManager().isFrozen();
+                    if (freezeTicks) singleplayerServer.tickRateManager().setFrozen(true);
                     var players = singleplayerServer.getPlayerList();
-                    players.setViewDistance(TEST_RENDER_DISTANCE);
+                    players.setViewDistance(testRenderDistance);
                     players.setSimulationDistance(
                             TEST_SIMULATION_DISTANCE
                     );
@@ -199,7 +241,7 @@ final class ShaderGameTestReporter {
             }
             var currentPipeline = Iris.getPipelineManager()
                     .getPipelineNullable();
-            var extension = IrisUtil.getPhotonics().orElse(null);
+            var extension = IrisManager.getPipeline().orElse(null);
             if (currentPipeline != null) {
                 pipelineClass = currentPipeline.getClass().getName();
             }
@@ -219,7 +261,7 @@ final class ShaderGameTestReporter {
                         );
             }
 
-            IShaderPack activePack = (IShaderPack) Iris.getCurrentPack()
+            IrisPack activePack = (IrisPack) Iris.getCurrentPack()
                     .orElse(null);
             if (activePack == null) {
                 if (activePipelineTicks > 0) {
@@ -233,20 +275,19 @@ final class ShaderGameTestReporter {
                 snapshotShaderPack(activePack);
                 Photonics.LOGGER.info(
                         "Shader game-test pack properties: enabled={}, mode={}",
-                        activePack.properties().isPhotonicsEnabled(),
-                        activePack.properties().getLightingMode()
+                        IrisManager.getPropertiesOrThrow().isEnabled(),
+                        IrisManager.getPropertiesOrThrow().getRenderer()
                 );
                 if (!hasExpectedShaderPackConfiguration(activePack)) {
                     errors.add("The shader game-test pack must enable direct "
                             + "ReSTIR with four spatial samples, block "
-                            + "lighting, GI, and block transparency while "
-                            + "disabling combined ReSTIR GI.");
+                            + "lighting, GI, and block transparency.");
                     finish(client, false);
                     return;
                 }
-            } else if (!shaderPack.equals(activePack.name())) {
+            } else if (!shaderPack.equals(activePack.ph$name())) {
                 errors.add("The active shader pack changed from " + shaderPack
-                        + " to " + activePack.name() + " during the shader "
+                        + " to " + activePack.ph$name() + " during the shader "
                         + "game test.");
                 finish(client, false);
                 return;
@@ -277,17 +318,47 @@ final class ShaderGameTestReporter {
             inactivePipelineReloadTicks = 0;
 
             if (cameraA == null) {
-                cameraA = CameraState.from(player);
+                originalCamera = CameraState.from(player);
+                cameraA = new CameraState(originalCamera.x, originalCamera.y, originalCamera.z,
+                        Float.parseFloat(System.getProperty("photonicengine.shaderGameTest.yaw", Float.toString(originalCamera.yaw))),
+                        Float.parseFloat(System.getProperty("photonicengine.shaderGameTest.pitch", Float.toString(originalCamera.pitch))));
                 cameraB = cameraA.translateRight(CAMERA_TRANSLATION_BLOCKS);
             }
 
-            CameraState activeCamera = movedCamera ? cameraB : cameraA;
+            boolean capturingMovement = !movedCamera
+                    && cameraAFrames.size() == REQUIRED_FRAMES_PER_CAMERA
+                    && movementFrames.size() < MOVEMENT_CAPTURE_COUNT;
+            CameraState activeCamera = movedCamera
+                    ? cameraB
+                    : capturingMovement
+                    ? cameraA.translateRight(
+                            CAMERA_TRANSLATION_BLOCKS *
+                                    (movementFrames.size() + 1.0) /
+                                    MOVEMENT_CAPTURE_COUNT
+                    )
+                    : cameraA;
             activeCamera.apply(player);
 
             if (settleTicks < (movedCamera
                     ? MOVED_SETTLE_TICKS
                     : INITIAL_SETTLE_TICKS)) {
+                // Quick Play may inherit a focus-loss pause screen. Resume
+                // before warmup; never accept a blurred menu as game imagery.
+                if (client.screen instanceof net.minecraft.client.gui.screens.PauseScreen) {
+                    client.setScreen(null);
+                }
                 settleTicks++;
+                if (!movedCamera && client.screen == null
+                        && Boolean.getBoolean("photonicengine.shaderGameTest.traceStartup")
+                        && List.of(2, 5, 10, 20, 40, 80, 160, 240).contains(settleTicks)) {
+                    captureStartup(client, settleTicks);
+                }
+                return;
+            }
+
+            if (client.screen != null) {
+                errors.add("A GUI screen interrupted the game capture: " + client.screen.getClass().getSimpleName());
+                finish(client, false);
                 return;
             }
 
@@ -295,7 +366,21 @@ final class ShaderGameTestReporter {
                 return;
             }
 
-            if (captureSpacingTicks < CAPTURE_SPACING_TICKS) {
+            if (sceneLights.isEmpty()) {
+                var lights = new ArrayList<Map<String, Object>>();
+                var center = player.blockPosition();
+                for (var pos : net.minecraft.core.BlockPos.betweenClosed(center.offset(-16, -8, -16), center.offset(16, 8, 16))) {
+                    var state = client.level.getBlockState(pos);
+                    if (state.getLightEmission() > 0) lights.add(Map.of(
+                            "block", state.toString(), "position", List.of(pos.getX(), pos.getY(), pos.getZ()),
+                            "emission", state.getLightEmission()));
+                }
+                sceneLights = List.copyOf(lights);
+            }
+
+            // Move a useful distance at tick cadence. The old 0.35-block walk
+            // with stationary capture spacing barely exercised disocclusion.
+            if (captureSpacingTicks < (capturingMovement ? 0 : CAPTURE_SPACING_TICKS)) {
                 captureSpacingTicks++;
                 return;
             }
@@ -315,20 +400,12 @@ final class ShaderGameTestReporter {
                 LightingFrameMetrics lighting = captureLightingAttachment();
                 ReservoirFrameMetrics reservoir =
                         captureReservoirAttachment();
-                CaptureReadiness activeReadiness = movedCamera
-                        ? cameraBReadiness
-                        : cameraAReadiness;
-                if (!activeReadiness.shouldCapture(lighting, reservoir)) {
-                    // A scene transition can begin after the first accepted
-                    // sample (for example while the voxel world finishes
-                    // streaming). Keep only one contiguous settled sequence;
-                    // otherwise one stale frame can poison an otherwise stable
-                    // aggregate without representing steady-state rendering.
-                    activeFrames.clear();
-                    activeLightingFrames.clear();
-                    activeReservoirFrames.clear();
-                    return;
-                }
+                CaptureStability activeStability = movedCamera
+                        ? cameraBStability
+                        : cameraAStability;
+                // Diagnose stability, but never select only good frames. Every
+                // scheduled sample after the fixed warmup affects the result.
+                activeStability.observe(lighting, reservoir);
 
                 activeLightingFrames.add(lighting);
                 activeReservoirFrames.add(reservoir);
@@ -343,6 +420,22 @@ final class ShaderGameTestReporter {
             }
 
             if (!movedCamera) {
+                if (movementFrames.size() < MOVEMENT_CAPTURE_COUNT) {
+                    movementLightingFrames.add(captureLightingAttachment());
+                    movementReservoirFrames.add(captureReservoirAttachment());
+                    captureInFlight = true;
+                    Screenshot.takeScreenshot(
+                            client.getMainRenderTarget(),
+                            image -> client.execute(
+                                    () -> acceptScreenshot(
+                                            image,
+                                            movementFrames
+                                    )
+                            )
+                    );
+                    return;
+                }
+
                 movedCamera = true;
                 settleTicks = 0;
                 captureSpacingTicks = 0;
@@ -367,6 +460,11 @@ final class ShaderGameTestReporter {
             List<FrameMetrics> target
     ) {
         try (image) {
+            Path screenshots = reportFile.getParent().resolve("screenshots");
+            Files.createDirectories(screenshots);
+            String camera = target == cameraAFrames ? "camera-a"
+                    : target == cameraBFrames ? "camera-b" : "movement";
+            image.writeToFile(screenshots.resolve(camera + "-" + target.size() + ".png"));
             target.add(FrameMetrics.from(image));
         } catch (Exception exception) {
             errors.add("Framebuffer readback failed: "
@@ -379,13 +477,19 @@ final class ShaderGameTestReporter {
 
     private boolean evaluateSuccess() {
         if (!errors.isEmpty()
+                || handheldFrames.stream().anyMatch(frame -> frame.finitePixelFraction < 1.0)
+                || finalLightingFrames.stream().anyMatch(frame -> frame.finitePixelFraction < 1.0)
+                || indirectLightingFrames.stream().anyMatch(frame -> frame.finitePixelFraction < 1.0)
                 || activePipelineTicks == 0
                 || cameraAFrames.size() != REQUIRED_FRAMES_PER_CAMERA
                 || cameraBFrames.size() != REQUIRED_FRAMES_PER_CAMERA
+                || movementFrames.size() != MOVEMENT_CAPTURE_COUNT
                 || cameraALightingFrames.size() != REQUIRED_FRAMES_PER_CAMERA
                 || cameraBLightingFrames.size() != REQUIRED_FRAMES_PER_CAMERA
+                || movementLightingFrames.size() != MOVEMENT_CAPTURE_COUNT
                 || cameraAReservoirFrames.size() != REQUIRED_FRAMES_PER_CAMERA
-                || cameraBReservoirFrames.size() != REQUIRED_FRAMES_PER_CAMERA) {
+                || cameraBReservoirFrames.size() != REQUIRED_FRAMES_PER_CAMERA
+                || movementReservoirFrames.size() != MOVEMENT_CAPTURE_COUNT) {
             return false;
         }
 
@@ -588,8 +692,21 @@ final class ShaderGameTestReporter {
                 );
             }
         } finally {
-            if (cameraA != null && client.player != null) {
-                cameraA.apply(client.player);
+            if (originalCamera != null && client.player != null) {
+                originalCamera.apply(client.player);
+                if (previousHotbarSlot >= 0) client.player.getInventory().setSelectedSlot(previousHotbarSlot);
+                var server = client.getSingleplayerServer();
+                var playerId = client.player.getUUID();
+                if (server != null) server.submit(() -> {
+                    var serverPlayer = server.getPlayerList().getPlayer(playerId);
+                    if (serverPlayer != null) {
+                        if (previousHotbarSlot >= 0) serverPlayer.getInventory().setSelectedSlot(previousHotbarSlot);
+                        serverPlayer.setPos(originalCamera.x, originalCamera.y, originalCamera.z);
+                        serverPlayer.setYRot(originalCamera.yaw);
+                        serverPlayer.setXRot(originalCamera.pitch);
+                    }
+                    if (freezeTicks) server.tickRateManager().setFrozen(previousTicksFrozen);
+                }).join();
             }
             if (focusPauseDisabled) {
                 client.options.pauseOnLostFocus = previousPauseOnLostFocus;
@@ -616,16 +733,25 @@ final class ShaderGameTestReporter {
                 || cameraBFrames.size() != REQUIRED_FRAMES_PER_CAMERA) {
             return "Did not capture all required rendered framebuffer frames.";
         }
+        if (movementFrames.size() != MOVEMENT_CAPTURE_COUNT) {
+            return "Did not capture all required incremental movement frames.";
+        }
         if (cameraALightingFrames.size() != REQUIRED_FRAMES_PER_CAMERA
                 || cameraBLightingFrames.size()
                 != REQUIRED_FRAMES_PER_CAMERA) {
             return "Did not capture all required ReSTIR lighting attachment "
                     + "frames.";
         }
+        if (movementLightingFrames.size() != MOVEMENT_CAPTURE_COUNT) {
+            return "Did not capture all required movement lighting frames.";
+        }
         if (cameraAReservoirFrames.size() != REQUIRED_FRAMES_PER_CAMERA
                 || cameraBReservoirFrames.size()
                 != REQUIRED_FRAMES_PER_CAMERA) {
             return "Did not capture all required direct reservoir frames.";
+        }
+        if (movementReservoirFrames.size() != MOVEMENT_CAPTURE_COUNT) {
+            return "Did not capture all required movement reservoir frames.";
         }
 
         AggregateMetrics framebufferA = AggregateMetrics.from(cameraAFrames);
@@ -760,26 +886,45 @@ final class ShaderGameTestReporter {
         metrics.put("extensionClass", extensionClass);
         metrics.put("shaderPack", shaderPack);
         metrics.put("shaderPackSettings", shaderPackSettings);
+        metrics.put("shaderPackSha256", shaderPackSha256);
+        metrics.put("reGIR", reGIRProperties);
+        metrics.put("executedDenoiserPasses", denoiserPasses);
+        metrics.put("sceneLights", sceneLights);
+        metrics.put("captureSceneStates", captureSceneStates);
+        metrics.put("pixelPackIsolationVerified", pixelPackIsolationVerified);
+        metrics.put("tracedLights", tracedLights);
+        metrics.put("nativeLightTable", nativeLightTable);
+        metrics.put("primarySurfaceProbes", primarySurfaceProbes);
+        metrics.put("diagnosticLightProbes", lightProbes);
+        metrics.put("sceneRayProbes", sceneRayProbes);
+        metrics.put("lightingProbeSeries", lightingProbeSeries);
+        metrics.put("roofColumns", roofColumns);
+        metrics.put("startupFrames", startupFrames);
+        metrics.put("handheldLighting", handheldFrames);
+        metrics.put("finalLighting", finalLightingFrames);
+        metrics.put("indirectLighting", indirectLightingFrames);
         metrics.put("shaderPackProperties", shaderPackProperties);
         metrics.put("activePipelineTicks", activePipelineTicks);
         metrics.put("inactivePipelineReloadTicks",
                 inactivePipelineReloadTicks);
         metrics.put("framesPerCamera", REQUIRED_FRAMES_PER_CAMERA);
+        metrics.put("movementCaptureCount", MOVEMENT_CAPTURE_COUNT);
         metrics.put("cameraTranslationBlocks", CAMERA_TRANSLATION_BLOCKS);
-        metrics.put("testRenderDistance", TEST_RENDER_DISTANCE);
+        metrics.put("testRenderDistance", testRenderDistance);
         metrics.put("testSimulationDistance", TEST_SIMULATION_DISTANCE);
         metrics.put("serverDistanceApplied", serverDistanceApplied);
+        metrics.put("diagnosticTicksFrozen", freezeTicks);
         metrics.put("reservoirSplattingHistory",
                 reservoirSplattingHistory);
         metrics.put("currentFrameSpatialConfidenceBaseline",
                 EXPECTED_SPATIAL_REUSE_SAMPLES + 1);
-        metrics.put("discardedWarmupFrames", Map.of(
-                "cameraA", cameraAReadiness.discardedFrames,
-                "cameraB", cameraBReadiness.discardedFrames
+        metrics.put("flaggedCapturedFrames", Map.of(
+                "cameraA", cameraAStability.flaggedCapturedFrames,
+                "cameraB", cameraBStability.flaggedCapturedFrames
         ));
-        metrics.put("warmupReadiness", Map.of(
-                "cameraA", warmupReadinessMetrics(cameraAReadiness),
-                "cameraB", warmupReadinessMetrics(cameraBReadiness)
+        metrics.put("captureStability", Map.of(
+                "cameraA", captureStabilityMetrics(cameraAStability),
+                "cameraB", captureStabilityMetrics(cameraBStability)
         ));
         Map<String, Object> thresholds = new LinkedHashMap<>();
         thresholds.put("minMeanLuminance", MIN_MEAN_LUMINANCE);
@@ -837,6 +982,9 @@ final class ShaderGameTestReporter {
         }
         if (cameraB != null) {
             metrics.put("cameraB", cameraMetrics(cameraB, cameraBFrames));
+        }
+        if (!movementFrames.isEmpty()) {
+            metrics.put("movement", movementMetrics());
         }
         if (!cameraAFrames.isEmpty() && !cameraBFrames.isEmpty()) {
             AggregateMetrics a = AggregateMetrics.from(cameraAFrames);
@@ -900,7 +1048,7 @@ final class ShaderGameTestReporter {
             LightingAggregateMetrics b =
                     LightingAggregateMetrics.from(cameraBLightingFrames);
             Map<String, Object> lighting = new LinkedHashMap<>();
-            lighting.put("attachment", "restir_lighting");
+            lighting.put("attachment", "di_output");
             lighting.put("format", "RGBA32F");
             lighting.put("cameraA", lightingCameraMetrics(
                     cameraA,
@@ -974,15 +1122,67 @@ final class ShaderGameTestReporter {
         return metrics;
     }
 
-    private static Map<String, Object> warmupReadinessMetrics(
-            CaptureReadiness readiness
+    private Map<String, Object> movementMetrics() {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("capturedFramebufferFrames", movementFrames.size());
+        result.put("capturedLightingFrames", movementLightingFrames.size());
+        result.put("capturedReservoirFrames", movementReservoirFrames.size());
+        result.put("incrementBlocks",
+                CAMERA_TRANSLATION_BLOCKS / MOVEMENT_CAPTURE_COUNT);
+
+        List<Map<String, Object>> lightingDeltas = new ArrayList<>();
+        for (int index = 1; index < movementLightingFrames.size(); index++) {
+            LightingFrameMetrics previous = movementLightingFrames.get(
+                    index - 1
+            );
+            LightingFrameMetrics current = movementLightingFrames.get(index);
+            double scale = Math.max(
+                    Math.max(
+                            Math.abs(previous.meanLuminance),
+                            Math.abs(current.meanLuminance)
+                    ),
+                    MIN_LIGHTING_MEAN_LUMINANCE
+            );
+            lightingDeltas.add(Map.of(
+                    "fromStep", index - 1,
+                    "toStep", index,
+                    "chromaticityDistance", distance(
+                            previous.chromaticity,
+                            current.chromaticity
+                    ),
+                    "relativeLuminanceChange", Math.abs(
+                            current.meanLuminance - previous.meanLuminance
+                    ) / scale,
+                    "nonzeroFractionChange", Math.abs(
+                            current.nonzeroPixelFraction -
+                                    previous.nonzeroPixelFraction
+                    )
+            ));
+        }
+        result.put("lightingConsecutiveDeltas", lightingDeltas);
+        if (!movementLightingFrames.isEmpty()) {
+            result.put("lighting", lightingCameraMetrics(
+                    cameraA,
+                    movementLightingFrames
+            ));
+        }
+        if (!movementReservoirFrames.isEmpty()) {
+            result.put("directReservoirs", reservoirCameraMetrics(
+                    movementReservoirFrames
+            ));
+        }
+        return result;
+    }
+
+    private static Map<String, Object> captureStabilityMetrics(
+            CaptureStability readiness
     ) {
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("discardedFrames", readiness.discardedFrames);
+        result.put("flaggedCapturedFrames", readiness.flaggedCapturedFrames);
         result.put("ready", readiness.isReady());
         result.put("consecutiveStableSamples",
                 readiness.consecutiveStableSamples);
-        LightingFrameMetrics lighting = readiness.lastDiscardedLighting;
+        LightingFrameMetrics lighting = readiness.lastFlaggedLighting;
         if (lighting != null) {
             result.put("lightingFinitePixelFraction",
                     lighting.finitePixelFraction);
@@ -991,7 +1191,7 @@ final class ShaderGameTestReporter {
             result.put("lightingMeanLuminance", lighting.meanLuminance);
             result.put("lightingChromaticity", lighting.chromaticity);
         }
-        ReservoirFrameMetrics reservoir = readiness.lastDiscardedReservoir;
+        ReservoirFrameMetrics reservoir = readiness.lastFlaggedReservoir;
         if (reservoir != null) {
             result.put("reservoirFinitePixelFraction",
                     reservoir.finitePixelFraction);
@@ -1003,7 +1203,7 @@ final class ShaderGameTestReporter {
                     reservoir.meanPositiveTargetConfidence);
             result.put("maxConfidence", reservoir.maxConfidence);
         }
-        result.put("lastDiscardedReason", readiness.lastDiscardedReason);
+        result.put("lastFlaggedReason", readiness.lastFlaggedReason);
         if (readiness.lastChromaticityDistance != null) {
             result.put("lastChromaticityDistance",
                     readiness.lastChromaticityDistance);
@@ -1162,7 +1362,46 @@ final class ShaderGameTestReporter {
     }
 
     private LightingFrameMetrics captureLightingAttachment() {
-        IGpuTexture2D texture = findRestirAttachment("restir_lighting");
+        if (tracedLights.isEmpty()) {
+            var lights = IrisManager.getPipeline().orElseThrow().tracedLightsSnapshot();
+            var records = new ArrayList<Map<String, Object>>();
+            for (int index = 0; index < lights.size(); index++) {
+                var light = lights.get(index);
+                var color = light.lightInfo().getColorAsVector();
+                int currentId = IrisPack.getCurrentPack().orElseThrow().ph$getBlockId(light.blockState());
+                if (light.blockId() != currentId)
+                    errors.add("Stale shader block ID for " + light.blockState() + ": GPU=" + light.blockId() + ", current=" + currentId);
+                records.add(Map.of("index", index, "position", List.of(light.pos().x, light.pos().y, light.pos().z),
+                        "state", light.blockState().toString(), "blockId", light.blockId(),
+                        "radiance", List.of(color.x, color.y, color.z)));
+            }
+            tracedLights = List.copyOf(records);
+            snapshotNativeLightTable();
+            snapshotPrimarySurfaces();
+            roofColumns = snapshotRoofColumns();
+            if (Boolean.getBoolean("photonics.traceLighting")) {
+                snapshotLightProbes();
+                snapshotSceneRayProbes();
+            }
+        }
+        var player = Minecraft.getInstance().player;
+        var supplier = new at.redi2go.photonics.common.HandheldLightSupplierImpl();
+        captureSceneStates.add(Map.of(
+                "history", reservoirSplattingHistory,
+                "fpsIncludingReadbackOverhead", Minecraft.getInstance().getFps(),
+                "mainHandItem", player.getMainHandItem().toString(),
+                "offHandItem", player.getOffhandItem().toString(),
+                "mainHandLightBlock", supplier.getMainHand().map(item -> item.getBlockState().toString()).orElse("none"),
+                "offHandLightBlock", supplier.getOffHand().map(item -> item.getBlockState().toString()).orElse("none")));
+        handheldFrames.add(captureLightingAttachment("handheld_diffuse"));
+        if (((RestirPipeline) IrisManager.getPipeline().orElseThrow()).isRestirGiEnabled())
+            indirectLightingFrames.add(captureLightingAttachment("gi_output"));
+        finalLightingFrames.add(captureLightingAttachment(denoiserPasses > 0 ? "denoise_result" : "diffuse_history"));
+        return captureLightingAttachment("di_output");
+    }
+
+    private LightingFrameMetrics captureLightingAttachment(String name) {
+        IGpuTexture2D texture = findRestirAttachment(name);
         int width = texture.ph$size().x();
         int height = texture.ph$size().y();
         FloatBuffer pixels = MemoryUtil.memAllocFloat(width * height * 4);
@@ -1172,11 +1411,14 @@ final class ShaderGameTestReporter {
                             | GL42.GL_FRAMEBUFFER_BARRIER_BIT
             );
             readTextureImage(
-                    "restir_lighting",
+                    name,
                     texture,
-                    GL11.GL_RGBA,
+                    name.equals("denoise_result") || name.equals("diffuse_history") ? GL30.GL_RGBA_INTEGER : GL11.GL_RGBA,
                     pixels
             );
+            if (!pixelPackIsolationVerified && name.equals("di_output")) verifyPixelPackIsolation(name, texture, pixels);
+            if (Boolean.getBoolean("photonics.traceLighting")) recordLightingProbes(name, pixels, width, height);
+            if (!name.equals("handheld_diffuse")) saveLightingImage(name, pixels, width, height);
             return LightingFrameMetrics.from(pixels, width, height);
         } finally {
             MemoryUtil.memFree(pixels);
@@ -1207,13 +1449,346 @@ final class ShaderGameTestReporter {
         }
     }
 
+    private void recordLightingProbes(String name, FloatBuffer pixels, int width, int height) {
+        var probes = new ArrayList<List<Double>>();
+        // A small neighborhood averages stochastic noise without mixing the
+        // distant colored windows. Coordinates match the diagnostic ray pass.
+        for (int probe = 0; probe < 9; probe++) {
+            int cx = width * (probe % 3 + 1) / 4, cy = height * (probe / 3 + 1) / 4;
+            double[] sum = new double[3];
+            int count = 0;
+            for (int y = Math.max(0, cy - 3); y <= Math.min(height - 1, cy + 3); y++) {
+                for (int x = Math.max(0, cx - 3); x <= Math.min(width - 1, cx + 3); x++) {
+                    for (int channel = 0; channel < 3; channel++) sum[channel] += pixels.get((y * width + x) * 4 + channel);
+                    count++;
+                }
+            }
+            probes.add(List.of(sum[0] / count, sum[1] / count, sum[2] / count));
+        }
+        lightingProbeSeries.computeIfAbsent(name, ignored -> new ArrayList<>()).add(Map.of(
+                "capture", diagnosticCaptureLabel != null ? diagnosticCaptureLabel : Integer.toString(captureSceneStates.size() - 1),
+                "probes", probes));
+    }
+
+    private void verifyPixelPackIsolation(String name, IGpuTexture2D texture, FloatBuffer reference) {
+        int[] parameters = {GL11.GL_PACK_ALIGNMENT, GL11.GL_PACK_ROW_LENGTH,
+                GL11.GL_PACK_SKIP_ROWS, GL11.GL_PACK_SKIP_PIXELS, GL11.GL_PACK_SWAP_BYTES};
+        int[] diagnosticValues = {8, texture.ph$size().x() + 13, 2, 3, 1};
+        int[] previous = new int[parameters.length];
+        FloatBuffer repeated = MemoryUtil.memAllocFloat(reference.capacity());
+        try {
+            for (int i = 0; i < parameters.length; i++) {
+                previous[i] = GL11.glGetInteger(parameters[i]);
+                GL11.glPixelStorei(parameters[i], diagnosticValues[i]);
+            }
+            readTextureImage(name, texture, GL11.GL_RGBA, repeated);
+            for (int i = 0; i < reference.capacity(); i++) {
+                if (Float.floatToRawIntBits(reference.get(i)) != Float.floatToRawIntBits(repeated.get(i)))
+                    throw new IllegalStateException("Pixel-pack layout changed readback at float " + i);
+            }
+            for (int i = 0; i < parameters.length; i++) {
+                if (GL11.glGetInteger(parameters[i]) != diagnosticValues[i])
+                    throw new IllegalStateException("Readback did not restore pixel-pack parameter " + parameters[i]);
+            }
+            pixelPackIsolationVerified = true;
+        } finally {
+            for (int i = 0; i < parameters.length; i++) GL11.glPixelStorei(parameters[i], previous[i]);
+            MemoryUtil.memFree(repeated);
+        }
+    }
+
+    private void saveLightingImage(String name, FloatBuffer pixels, int width, int height) {
+        try (NativeImage image = new NativeImage(width, height, false)) {
+            for (int y = 0; y < height; y++) for (int x = 0; x < width; x++) {
+                int index = (y * width + x) * 4;
+                int color = 0xff000000;
+                for (int channel = 0; channel < 3; channel++) {
+                    float value = pixels.get(index + channel);
+                    int encoded = Float.isFinite(value)
+                            ? (int) Math.round(255.0 * Math.pow(Math.max(0.0f, value) / (1.0 + Math.max(0.0f, value)), 1.0 / 2.2)) : 255;
+                    color |= encoded << (16 - channel * 8);
+                }
+                image.setPixel(x, height - y - 1, color);
+            }
+            Path directory = reportFile.getParent().resolve("screenshots");
+            Files.createDirectories(directory);
+            image.writeToFile(directory.resolve(name + "-" + (diagnosticCaptureLabel != null
+                    ? diagnosticCaptureLabel : captureSceneStates.size() - 1) + ".png"));
+        } catch (IOException exception) {
+            throw new IllegalStateException("Could not save diagnostic lighting attachment", exception);
+        }
+    }
+
+    private void captureStartup(Minecraft client, int tick) {
+        diagnosticCaptureLabel = "startup-" + tick;
+        try {
+            var record = new LinkedHashMap<String, Object>();
+            record.put("tick", tick);
+            record.put("elapsedMillis", Duration.between(startedAt, Instant.now()).toMillis());
+            record.put("history", reservoirSplattingHistory);
+            record.put("roofColumns", snapshotRoofColumns());
+            record.put("direct", captureLightingAttachment("di_output"));
+            record.put("filtered", captureLightingAttachment(denoiserPasses > 0 ? "denoise_result" : "diffuse_history"));
+            startupFrames.add(record);
+            Screenshot.takeScreenshot(client.getMainRenderTarget(), image -> client.execute(() -> {
+                try (image) {
+                    Path screenshots = reportFile.getParent().resolve("screenshots");
+                    Files.createDirectories(screenshots);
+                    image.writeToFile(screenshots.resolve("startup-" + tick + ".png"));
+                } catch (IOException exception) {
+                    errors.add("Could not retain startup frame " + tick + ": " + exception.getMessage());
+                }
+            }));
+        } finally {
+            diagnosticCaptureLabel = null;
+        }
+    }
+
+    private List<Map<String, Object>> snapshotRoofColumns() {
+        var client = Minecraft.getInstance();
+        var level = client.level;
+        var camera = client.gameRenderer.getMainCamera().position();
+        var records = new ArrayList<Map<String, Object>>();
+        FloatBuffer roofPixels = null;
+        try {
+            if (Boolean.getBoolean("photonics.traceLighting")) {
+                roofPixels = MemoryUtil.memAllocFloat(9 * 256 * 4);
+                readTextureImage("probe_roof_hit", findRestirAttachment("probe_roof_hit"), GL11.GL_RGBA, roofPixels);
+            }
+            for (int probe = 0; probe < 9; probe++) {
+                var origin = camera.add((probe % 3 - 1) * 4, 0, (probe / 3 - 1) * 4);
+                var start = net.minecraft.core.BlockPos.containing(origin);
+                boolean loaded = level.hasChunk(start.getX() >> 4, start.getZ() >> 4);
+                var record = new LinkedHashMap<String, Object>();
+                record.put("origin", List.of(origin.x, origin.y, origin.z));
+                record.put("clientChunkLoaded", loaded);
+                record.put("renderDistance", client.options.renderDistance().get());
+                if (loaded) {
+                    record.put("originBlock", level.getBlockState(start).toString());
+                    record.put("canSeeSky", level.canSeeSky(start));
+                    record.put("skylight", level.getBrightness(net.minecraft.world.level.LightLayer.SKY, start));
+                    for (int y = start.getY() + 1; y <= level.getMaxY(); y++) {
+                        var pos = new net.minecraft.core.BlockPos(start.getX(), y, start.getZ());
+                        var state = level.getBlockState(pos);
+                        if (state.isAir()) continue;
+                        record.put("firstBlockAbove", state.toString());
+                        record.put("firstBlockY", y);
+                        record.put("withinVoxelVerticalRange", Math.abs((y >> 4) - (start.getY() >> 4))
+                                <= client.options.renderDistance().get());
+                        break;
+                    }
+                }
+                if (roofPixels != null) {
+                    int offset = probe * 4;
+                    record.put("gpuFirstHit", List.of(roofPixels.get(offset), roofPixels.get(offset + 1),
+                            roofPixels.get(offset + 2), roofPixels.get(offset + 3)));
+                }
+                records.add(record);
+            }
+            return List.copyOf(records);
+        } finally {
+            if (roofPixels != null) MemoryUtil.memFree(roofPixels);
+        }
+    }
+
+    private void snapshotLightProbes() {
+        for (String name : List.of("probe_unoccluded", "probe_visible", "probe_first_hit", "probe_sky_visibility")) {
+            var texture = findRestirAttachment(name);
+            FloatBuffer pixels = MemoryUtil.memAllocFloat(9 * 256 * 4);
+            try {
+                readTextureImage(name, texture, GL11.GL_RGBA, pixels);
+                var records = new ArrayList<Map<String, Object>>();
+                for (int light = 0; light < Math.min(256, tracedLights.size()); light++) {
+                    var values = new ArrayList<List<Float>>();
+                    for (int probe = 0; probe < 9; probe++) {
+                        int offset = (light * 9 + probe) * 4;
+                        values.add(List.of(pixels.get(offset), pixels.get(offset + 1), pixels.get(offset + 2), pixels.get(offset + 3)));
+                        if (name.equals("probe_sky_visibility")
+                                && tracedLights.get(light).get("state").equals("Block{minecraft:sea_lantern}")
+                                && pixels.get(offset) > 0.0f
+                                && (((Number) primarySurfaceProbes.get(probe).get("flags")).intValue() & 4) == 0) {
+                            errors.add("Sky visibility ray passed through opaque sea lantern: light " + light + ", probe " + probe);
+                        }
+                    }
+                    records.add(Map.of("lightIndex", light, "probes", values));
+                }
+                lightProbes.put(name, records);
+            } finally {
+                MemoryUtil.memFree(pixels);
+            }
+        }
+    }
+
+    private void snapshotSceneRayProbes() {
+        for (String name : List.of("probe_roof_hit", "probe_sun_hit", "probe_sun_direction", "probe_primary_hit")) {
+            FloatBuffer pixels = MemoryUtil.memAllocFloat(9 * 256 * 4);
+            try {
+                readTextureImage(name, findRestirAttachment(name), GL11.GL_RGBA, pixels);
+                var values = new ArrayList<List<Float>>();
+                for (int probe = 0; probe < 9; probe++) {
+                    int offset = (9 + probe) * 4;
+                    values.add(List.of(pixels.get(offset), pixels.get(offset + 1), pixels.get(offset + 2), pixels.get(offset + 3)));
+                }
+                sceneRayProbes.put(name + "_reservoir_stage", values);
+                if (name.equals("probe_primary_hit")) {
+                    for (int probe = 0; probe < values.size(); probe++) {
+                        int rasterFlags = ((Number) primarySurfaceProbes.get(probe).get("flags")).intValue();
+                        int retainedFlags = values.get(probe).get(3).intValue();
+                        if ((rasterFlags & 13) == 1 && (retainedFlags & 8) != 0) {
+                            errors.add("Reused opaque camera path stopped on transmissive glass at probe " + probe);
+                        }
+                    }
+                }
+                if (name.equals("probe_sun_direction") && values.stream().allMatch(value -> value.get(0) == 0.0f)
+                        && values.subList(0, 6).stream().allMatch(value -> value.get(1) >= 19.0f && value.get(2) > 0.0f)) {
+                    errors.add("Forward splat bins are empty across the room despite mature temporal confidence; check compute dispatch coverage.");
+                }
+            } finally {
+                MemoryUtil.memFree(pixels);
+            }
+        }
+        for (String name : List.of("probe_sun_hit", "probe_sun_direction", "probe_primary_hit")) {
+            FloatBuffer pixels = MemoryUtil.memAllocFloat(9 * 256 * 4);
+            try {
+                readTextureImage(name, findRestirAttachment(name), GL11.GL_RGBA, pixels);
+                var records = new ArrayList<Map<String, Object>>();
+                var client = Minecraft.getInstance();
+                for (int probe = 0; probe < 9; probe++) {
+                    int offset = probe * 4;
+                    var value = new net.minecraft.world.phys.Vec3(pixels.get(offset), pixels.get(offset + 1), pixels.get(offset + 2));
+                    var record = new LinkedHashMap<String, Object>();
+                    record.put("value", List.of(value.x, value.y, value.z, (double) pixels.get(offset + 3)));
+                    if (name.equals("probe_sun_direction")) {
+                        var point = (List<?>) primarySurfaceProbes.get(probe).get("worldPosition");
+                        var normal = (List<?>) primarySurfaceProbes.get(probe).get("geometryNormal");
+                        var start = new net.minecraft.world.phys.Vec3(((Number) point.get(0)).doubleValue(),
+                                ((Number) point.get(1)).doubleValue(), ((Number) point.get(2)).doubleValue())
+                                .add(((Number) normal.get(0)).doubleValue() * 0.03,
+                                        ((Number) normal.get(1)).doubleValue() * 0.03, ((Number) normal.get(2)).doubleValue() * 0.03);
+                        var result = client.level.clip(new net.minecraft.world.level.ClipContext(start, start.add(value.scale(96)),
+                                net.minecraft.world.level.ClipContext.Block.COLLIDER, net.minecraft.world.level.ClipContext.Fluid.NONE, client.player));
+                        record.put("cpuType", result.getType().toString());
+                        record.put("cpuPosition", List.of(result.getLocation().x, result.getLocation().y, result.getLocation().z));
+                        record.put("cpuBlock", client.level.getBlockState(result.getBlockPos()).toString());
+                        if (probe < 3 && result.getType() == net.minecraft.world.phys.HitResult.Type.BLOCK
+                                && client.level.getBlockState(result.getBlockPos()).is(net.minecraft.world.level.block.Blocks.SANDSTONE)
+                                && pixels.get(offset + 3) == 0.0f) {
+                            errors.add("Native sun shadow misses the loaded sandstone occluder at floor probe " + probe);
+                        }
+                    }
+                    records.add(record);
+                }
+                sceneRayProbes.put(name, records);
+            } finally {
+                MemoryUtil.memFree(pixels);
+            }
+        }
+    }
+
+    private void snapshotPrimarySurfaces() {
+        var positions = findRestirAttachment("frag_data0");
+        var metadata = findRestirAttachment("frag_data1");
+        int width = positions.ph$size().x(), height = positions.ph$size().y();
+        var positionPixels = MemoryUtil.memAllocFloat(width * height * 4);
+        var metadataPixels = MemoryUtil.memAllocFloat(width * height * 4);
+        try {
+            readTextureImage("frag_data0", positions, GL11.GL_RGBA, positionPixels);
+            readTextureImage("frag_data1", metadata, GL30.GL_RGBA_INTEGER, metadataPixels);
+            var records = new ArrayList<Map<String, Object>>();
+            var camera = Minecraft.getInstance().gameRenderer.getMainCamera().position();
+            for (int y = 1; y <= 3; y++) for (int x = 1; x <= 3; x++) {
+                int offset = ((height * y / 4) * width + width * x / 4) * 4;
+                var point = camera.add(positionPixels.get(offset), positionPixels.get(offset + 1), positionPixels.get(offset + 2));
+                int packed = Float.floatToRawIntBits(metadataPixels.get(offset + 1));
+                double nx = (packed & 65535) / 65535.0 * 2 - 1;
+                double ny = (packed >>> 16) / 65535.0 * 2 - 1;
+                double nz = 1 - Math.abs(nx) - Math.abs(ny);
+                double t = Math.max(0, -nz);
+                nx += nx >= 0 ? -t : t;
+                ny += ny >= 0 ? -t : t;
+                var normal = new net.minecraft.world.phys.Vec3(nx, ny, nz).normalize();
+                var surface = net.minecraft.core.BlockPos.containing(point.subtract(normal.scale(0.02)));
+                records.add(Map.of("screenFraction", List.of(x / 4.0, y / 4.0),
+                        "worldPosition", List.of(point.x, point.y, point.z),
+                        "geometryNormal", List.of(normal.x, normal.y, normal.z),
+                        "surfaceBlock", Minecraft.getInstance().level.getBlockState(surface).toString(),
+                        "flags", Float.floatToRawIntBits(metadataPixels.get(offset + 3))));
+            }
+            primarySurfaceProbes = List.copyOf(records);
+            // The upper row of this room fixture sees walls/ceiling, never the
+            // held item. Global brightness metrics can pass while a corrupt
+            // depth copy classifies the entire scene as the player's hand.
+            if (records.subList(6, 9).stream().allMatch(record ->
+                    (((Number) record.get("flags")).intValue() & 4) != 0)) {
+                errors.add("All upper-room surface probes were classified as hands; depth reconstruction is invalid.");
+            }
+            for (int probe = 0; probe < records.size(); probe++) {
+                var record = records.get(probe);
+                if ((record.get("surfaceBlock").equals("Block{minecraft:sandstone}")
+                        || record.get("surfaceBlock").equals("Block{minecraft:sea_lantern}"))
+                        && (((Number) record.get("flags")).intValue() & 8) != 0) {
+                    errors.add("Opaque primary surface classified as transmissive at probe " + probe
+                            + ": " + record.get("surfaceBlock"));
+                }
+            }
+        } finally {
+            MemoryUtil.memFree(positionPixels);
+            MemoryUtil.memFree(metadataPixels);
+        }
+    }
+
+    private void snapshotNativeLightTable() {
+        // Read the native pack's table after setup has run; never substitute
+        // test colors or alter its image/sampler bindings.
+        try {
+            var pipeline = Iris.getPipelineManager().getPipelineNullable();
+            var field = IrisRenderingPipeline.class.getDeclaredField("customImages");
+            field.setAccessible(true);
+            var images = (java.util.Set<?>) field.get(pipeline);
+            var records = new ArrayList<Map<String, Object>>();
+            for (Object value : images) {
+                var image = (net.irisshaders.iris.gl.image.GlImage) value;
+                if (!"texBlockLight".equals(image.getSamplerName())) continue;
+                int width = GL45.glGetTextureLevelParameteri(image.getId(), 0, GL11.GL_TEXTURE_WIDTH);
+                int height = GL45.glGetTextureLevelParameteri(image.getId(), 0, GL11.GL_TEXTURE_HEIGHT);
+                FloatBuffer pixels = MemoryUtil.memAllocFloat(width * height * 4);
+                try {
+                    readTextureImage(image.getName(), image.getId(), width, height, GL11.GL_RGBA, pixels);
+                    for (int blockId : tracedLights.stream().mapToInt(light -> (Integer) light.get("blockId")).distinct().toArray()) {
+                        if (blockId < 0 || blockId >= width * height) continue;
+                        int offset = blockId * 4;
+                        records.add(Map.of("blockId", blockId, "rgba", List.of(pixels.get(offset),
+                                pixels.get(offset + 1), pixels.get(offset + 2), pixels.get(offset + 3))));
+                    }
+                } finally {
+                    MemoryUtil.memFree(pixels);
+                }
+            }
+            nativeLightTable = List.copyOf(records);
+        } catch (ReflectiveOperationException exception) {
+            throw new IllegalStateException("Cannot inspect native custom light image", exception);
+        }
+    }
+
     private static void readTextureImage(
             String attachmentName,
             IGpuTexture2D texture,
             int format,
             FloatBuffer pixels
     ) {
-        int handle = IrisUtil.getTextureHandle(texture);
+        readTextureImage(attachmentName, IrisUtil.getTextureHandle(texture),
+                texture.ph$size().x(), texture.ph$size().y(), format, pixels);
+    }
+
+    private static void readTextureImage(String attachmentName, int handle, int width, int height,
+                                         int format, FloatBuffer pixels) {
+        int allocatedWidth = GL45.glGetTextureLevelParameteri(handle, 0, GL11.GL_TEXTURE_WIDTH);
+        int allocatedHeight = GL45.glGetTextureLevelParameteri(handle, 0, GL11.GL_TEXTURE_HEIGHT);
+        if (allocatedWidth != width || allocatedHeight != height) {
+            throw new IllegalStateException("Readback size mismatch for " + attachmentName
+                    + ": allocated " + allocatedWidth + "x" + allocatedHeight
+                    + ", reported " + width + "x" + height);
+        }
         int priorError = GL11.glGetError();
         if (priorError != GL11.GL_NO_ERROR) {
             throw new IllegalStateException(
@@ -1227,14 +1802,23 @@ final class ShaderGameTestReporter {
                 pixels.remaining(),
                 Float.BYTES
         );
-        GL45.glGetTextureImage(
-                handle,
-                0,
-                format,
-                GL11.GL_FLOAT,
-                byteCount,
-                MemoryUtil.memAddress(pixels)
-        );
+        // Pixel packing is context state, not texture state. Minecraft's
+        // readbacks leave row/skip settings behind. Own the layout of this
+        // buffer and restore the caller's settings, including on failure.
+        int[] parameters = {GL11.GL_PACK_ALIGNMENT, GL11.GL_PACK_ROW_LENGTH,
+                GL11.GL_PACK_SKIP_ROWS, GL11.GL_PACK_SKIP_PIXELS, GL11.GL_PACK_SWAP_BYTES};
+        int[] previous = new int[parameters.length];
+        for (int index = 0; index < parameters.length; index++) {
+            previous[index] = GL11.glGetInteger(parameters[index]);
+            GL11.glPixelStorei(parameters[index], index == 0 ? 4 : 0);
+        }
+        try {
+            GL45.glGetTextureImage(handle, 0, format, format == GL30.GL_RGBA_INTEGER ? GL11.GL_UNSIGNED_INT : GL11.GL_FLOAT,
+                    byteCount, MemoryUtil.memAddress(pixels));
+        } finally {
+            for (int index = 0; index < parameters.length; index++)
+                GL11.glPixelStorei(parameters[index], previous[index]);
+        }
         int error = GL11.glGetError();
         if (error != GL11.GL_NO_ERROR) {
             throw new IllegalStateException(
@@ -1248,9 +1832,6 @@ final class ShaderGameTestReporter {
     private IGpuTexture2D findRestirAttachment(String attachmentName) {
         for (DeferredIrisRenderer renderer
                 : IrisUtil.getPipelineManager().getRenderers()) {
-            if (!renderer.name().equals("restir")) {
-                continue;
-            }
             for (DeferredIrisRenderer.Pass pass : renderer.getPasses()) {
                 if (pass instanceof DeferredIrisRenderer.DeferredPass deferred
                         && deferred.framebuffer()
@@ -1261,6 +1842,11 @@ final class ShaderGameTestReporter {
                     if (attachment.isPresent()) {
                         return attachment.get();
                     }
+                } else if (pass instanceof DeferredIrisRenderer.DeferredPass deferred
+                        && deferred.framebuffer() instanceof at.redi2go.photonics.common.iris.pipeline.framebuffer.SingleFramebuffer framebuffer) {
+                    var attachment = framebuffer.attachments().stream()
+                            .filter(value -> value.name().equals(attachmentName)).findFirst();
+                    if (attachment.isPresent()) return attachment.get().texture();
                 }
             }
         }
@@ -1270,21 +1856,36 @@ final class ShaderGameTestReporter {
         );
     }
 
-    private void snapshotShaderPack(IShaderPack activePack)
+    private void snapshotShaderPack(IrisPack activePack)
             throws IOException {
-        shaderPack = activePack.name();
-        var properties = activePack.properties();
+        shaderPack = activePack.ph$name();
+        var archive = FabricLoader.getInstance().getGameDir().resolve("shaderpacks").resolve(shaderPack);
+        if (Files.isRegularFile(archive)) {
+            try {
+                shaderPackSha256 = java.util.HexFormat.of().formatHex(
+                        java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(archive)));
+            } catch (java.security.NoSuchAlgorithmException exception) {
+                throw new IllegalStateException(exception);
+            }
+        }
+        var properties = IrisManager.getPropertiesOrThrow();
+        var restir = IrisManager.getRendererProperties(RestirProperties.class);
+        var regir = restir.getReGIRProperties();
+        reGIRProperties = Map.of("mode", regir.getReGIRMode().name(),
+                "presampling", regir.getReGIRLocalLightPresamplingMode().name(),
+                "fallback", regir.getReGIRLocalLightFallbackMode().name(),
+                "lightsPerCell", regir.getReGIRLightsPerCell(), "buildSamples", regir.getReGIRBuildSamples());
         shaderPackProperties = Map.of(
-                "enabled", properties.isPhotonicsEnabled(),
-                "lightingMode", properties.getLightingMode().name(),
-                "blockLightEnabled", properties.isBlockLightEnabled(),
-                "giEnabled", properties.isGiEnabled(),
-                "combinedRestirGiEnabled", properties.useRestirCombinedGi(),
-                "alphaMode", properties.getAlphaMode().name(),
+                "enabled", properties.isEnabled(),
+                "lightingMode", properties.getRenderer().name(),
+                "blockLightEnabled", properties.getBlockLightProperties().isEnabled(),
+                "giEnabled", properties.getGiProperties().isEnabled(),
+                "combinedRestirGiEnabled", restir.getGiProperties().isEnabled(),
+                "alphaMode", properties.getTransparencyMode().name(),
                 "spatialReuseSamples",
-                properties.getRestirSpatialReuseSamples(),
+                restir.getSpatialReuseSamples(),
                 "restirDenoiserPasses",
-                properties.getRestirDenoiserPasses()
+                restir.getDenoiserPasses()
         );
 
         Path settingsFile = FabricLoader.getInstance()
@@ -1310,19 +1911,16 @@ final class ShaderGameTestReporter {
     }
 
     private static boolean hasExpectedShaderPackConfiguration(
-            IShaderPack shaderPack
+            IrisPack shaderPack
     ) {
-        var properties = shaderPack.properties();
-        return properties.isPhotonicsEnabled()
-                && properties.getLightingMode() == LightingMode.RESTIR
-                && properties.isBlockLightEnabled()
-                && properties.isGiEnabled()
-                && !properties.useRestirCombinedGi()
-                && properties.getAlphaMode() == AlphaMode.BLOCK
-                && properties.getRestirSpatialReuseSamples()
-                == EXPECTED_SPATIAL_REUSE_SAMPLES
-                && properties.getRestirDenoiserPasses()
-                == EXPECTED_RESTIR_DENOISER_PASSES;
+        var properties = IrisManager.getPropertiesOrThrow();
+        var restir = IrisManager.getRendererProperties(RestirProperties.class);
+        return properties.isEnabled()
+                && properties.getRenderer() == PhotonicsRenderer.RESTIR
+                && properties.getBlockLightProperties().isEnabled()
+                && properties.getGiProperties().isEnabled()
+                && properties.getTransparencyMode() == TransparencyMode.BLOCK
+                && restir.getSpatialReuseSamples() > 0;
     }
 
     private Map<String, Object> cameraMetrics(
@@ -1808,18 +2406,18 @@ final class ShaderGameTestReporter {
         }
     }
 
-    private static final class CaptureReadiness {
-        private int discardedFrames;
+    private static final class CaptureStability {
+        private int flaggedCapturedFrames;
         private int consecutiveStableSamples;
         private LightingFrameMetrics previousLighting;
-        private LightingFrameMetrics lastDiscardedLighting;
-        private ReservoirFrameMetrics lastDiscardedReservoir;
-        private String lastDiscardedReason = "no samples evaluated";
+        private LightingFrameMetrics lastFlaggedLighting;
+        private ReservoirFrameMetrics lastFlaggedReservoir;
+        private String lastFlaggedReason = "no samples evaluated";
         private Double lastChromaticityDistance;
         private Double lastRelativeLuminanceChange;
         private Double lastNonzeroFractionChange;
 
-        boolean shouldCapture(
+        void observe(
                 LightingFrameMetrics lighting,
                 ReservoirFrameMetrics reservoir
         ) {
@@ -1831,14 +2429,14 @@ final class ShaderGameTestReporter {
             if (!sampleFailure.isEmpty()) {
                 consecutiveStableSamples = 0;
                 previousLighting = lighting;
-                discard(lighting, reservoir, sampleFailure, null, null, null);
-                return false;
+                flag(lighting, reservoir, sampleFailure, null, null, null);
+                return;
             }
 
             if (consecutiveStableSamples == 0 || previousLighting == null) {
                 consecutiveStableSamples = 1;
                 previousLighting = lighting;
-                discard(
+                flag(
                         lighting,
                         reservoir,
                         "collecting the first stable HDR lighting sample",
@@ -1846,7 +2444,7 @@ final class ShaderGameTestReporter {
                         null,
                         null
                 );
-                return false;
+                return;
             }
 
             double chromaticityDistance = distance(
@@ -1876,7 +2474,7 @@ final class ShaderGameTestReporter {
             previousLighting = lighting;
             if (!stabilityFailure.isEmpty()) {
                 consecutiveStableSamples = 1;
-                discard(
+                flag(
                         lighting,
                         reservoir,
                         stabilityFailure,
@@ -1884,7 +2482,7 @@ final class ShaderGameTestReporter {
                         relativeLuminanceChange,
                         nonzeroFractionChange
                 );
-                return false;
+                return;
             }
 
             consecutiveStableSamples = Math.min(
@@ -1892,21 +2490,20 @@ final class ShaderGameTestReporter {
                     REQUIRED_CONSECUTIVE_STABLE_SAMPLES
             );
             if (!previouslyReady) {
-                discard(
+                flag(
                         lighting,
                         reservoir,
                         isReady()
-                                ? "HDR readiness established; capture begins "
-                                + "with the next stable sample"
+                                ? "HDR stability established; frame retained"
                                 : "collecting consecutive stable HDR lighting "
                                 + "samples",
                         chromaticityDistance,
                         relativeLuminanceChange,
                         nonzeroFractionChange
                 );
-                return false;
+                return;
             }
-            return true;
+
         }
 
         boolean isReady() {
@@ -1914,7 +2511,7 @@ final class ShaderGameTestReporter {
                     >= REQUIRED_CONSECUTIVE_STABLE_SAMPLES;
         }
 
-        private void discard(
+        private void flag(
                 LightingFrameMetrics lighting,
                 ReservoirFrameMetrics reservoir,
                 String reason,
@@ -1922,10 +2519,10 @@ final class ShaderGameTestReporter {
                 Double relativeLuminanceChange,
                 Double nonzeroFractionChange
         ) {
-            discardedFrames++;
-            lastDiscardedLighting = lighting;
-            lastDiscardedReservoir = reservoir;
-            lastDiscardedReason = reason;
+            flaggedCapturedFrames++;
+            lastFlaggedLighting = lighting;
+            lastFlaggedReservoir = reservoir;
+            lastFlaggedReason = reason;
             lastChromaticityDistance = chromaticityDistance;
             lastRelativeLuminanceChange = relativeLuminanceChange;
             lastNonzeroFractionChange = nonzeroFractionChange;

@@ -7,12 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class RelativeComputePassTest {
     @Test
-    void preservesRelativeWorkGroupScalesForIris() {
+    void preservesRelativeInvocationScalesForIris() {
         var pass = new DeferredIrisRenderer.RelativeComputePass(
                 "screen pass",
                 "/screen.csh",
                 1.0f / 16.0f,
-                1.0f / 8.0f
+                1.0f / 8.0f,
+                java.util.List.of()
         );
 
         assertEquals(1.0f / 16.0f, pass.widthScale());
@@ -27,7 +28,8 @@ class RelativeComputePassTest {
                         "zero",
                         null,
                         0.0f,
-                        1.0f
+                        1.0f,
+                        java.util.List.of()
                 )
         );
         assertThrows(
@@ -36,7 +38,8 @@ class RelativeComputePassTest {
                         "infinite",
                         null,
                         1.0f,
-                        Float.POSITIVE_INFINITY
+                        Float.POSITIVE_INFINITY,
+                        java.util.List.of()
                 )
         );
     }

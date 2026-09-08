@@ -35,7 +35,9 @@ float direct_splat_update_confidence(
     vec2 previous_uv = ph_reproject_player_pos(
         current_reconnection.player_pos,
         direct_reconnection_is_hand(current_reconnection),
-        get_taa_jitter()
+        // Reservoir ownership is the unjittered film-pixel domain, unlike
+        // SVGF's jittered raster history. Match both retained-path shifts.
+        vec2(0.0f)
     ).xy;
     if (any(lessThan(previous_uv, vec2(0.0f))) ||
             any(greaterThanEqual(previous_uv, vec2(1.0f)))) {

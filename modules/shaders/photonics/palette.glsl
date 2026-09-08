@@ -16,6 +16,10 @@ const uint PH_LIGHT_TRANSMISSIVE_BLOCK_ID_FLAG = 1u << 31u;
 const uint PH_VOXEL_DATA_BLOCK_ID_MASK =
         ~PH_LIGHT_TRANSMISSIVE_BLOCK_ID_FLAG;
 
+VoxelData voxel_data_empty() {
+    return uvec4(0);
+}
+
 void voxel_data_apply_tint(inout VoxelData voxel_data, uvec4 tint) {
      voxel_data.y = ph_pack_int_color(
         ph_apply_int_tint(
@@ -26,7 +30,8 @@ void voxel_data_apply_tint(inout VoxelData voxel_data, uvec4 tint) {
 }
 
 int voxel_data_block_id(VoxelData voxel_data) {
-    return int(voxel_data.x & PH_VOXEL_DATA_BLOCK_ID_MASK);
+    uint block_id = voxel_data.x & PH_VOXEL_DATA_BLOCK_ID_MASK;
+    return block_id == PH_VOXEL_DATA_BLOCK_ID_MASK ? -1 : int(block_id);
 }
 
 bool voxel_data_is_light_transmissive(VoxelData voxel_data) {

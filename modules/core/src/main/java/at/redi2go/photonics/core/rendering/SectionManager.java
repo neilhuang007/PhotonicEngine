@@ -36,6 +36,7 @@ public class SectionManager implements RenderingComponent {
 
     private final IntSupplier renderDistanceSupplier;
     private long remeshCount = 0;
+    private boolean frameStarted;
 
     public SectionManager(IntSupplier renderDistanceSupplier) {
         this.renderDistanceSupplier = renderDistanceSupplier;
@@ -182,6 +183,7 @@ public class SectionManager implements RenderingComponent {
     public void onFrameBegin() {
         ILevel level = Minecraft.getLevel();
         if (level == null) return;
+        frameStarted = true;
 
         try {
             // refreshSections has its own camera-section/render-distance guard.
@@ -196,6 +198,7 @@ public class SectionManager implements RenderingComponent {
 
     @Override
     public void onSectionAdded(int x, int y, int z) {
+        if (!frameStarted) return;
         ILevel level = Minecraft.getLevel();
         if (level == null) return;
 
@@ -246,6 +249,7 @@ public class SectionManager implements RenderingComponent {
 
     @Override
     public void onSectionChanged(int x, int y, int z) {
+        if (!frameStarted) return;
         ILevel level = Minecraft.getLevel();
         if (level == null) return;
 
@@ -277,9 +281,9 @@ public class SectionManager implements RenderingComponent {
     public static Vector3i getCameraChunkPos() {
         var cameraPos = Minecraft.getCameraPos();
         return new Vector3i(
-                (int) cameraPos.x >> 4,
-                (int) cameraPos.y >> 4,
-                (int) cameraPos.z >> 4
+                (int) Math.floor(cameraPos.x) >> 4,
+                (int) Math.floor(cameraPos.y) >> 4,
+                (int) Math.floor(cameraPos.z) >> 4
         );
     }
 

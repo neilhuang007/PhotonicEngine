@@ -6,7 +6,7 @@ import at.redi2go.photonics.api.mc.core.IBlockPos;
 import at.redi2go.photonics.api.mc.world.level.IBlock;
 import at.redi2go.photonics.api.mc.world.level.ILevel;
 import at.redi2go.photonics.api.mc.world.level.chunk.IChunkSection;
-import at.redi2go.photonics.api.shaders.IShaderPack;
+import at.redi2go.photonics.core.iris.IrisPack;
 import at.redi2go.photonics.core.config.PhConfig;
 import at.redi2go.photonics.core.config.PhConfigWatcher;
 import at.redi2go.photonics.core.config.lights.LightRegistry;
@@ -58,6 +58,8 @@ public abstract class AbstractLightList implements Runnable, RenderingComponent 
     protected LightList lights;
     protected LightList mostRecentLights;
     private volatile long contentGeneration;
+    private final at.redi2go.photonics.core.rendering.SceneChangeDiagnostics sceneDiagnostics =
+            new at.redi2go.photonics.core.rendering.SceneChangeDiagnostics();
 
     @SuppressWarnings("UnstableApiUsage")
     public AbstractLightList(
@@ -162,10 +164,11 @@ public abstract class AbstractLightList implements Runnable, RenderingComponent 
         var level = Minecraft.getLevel();
         if (level == null) return false;
 
-        var shaderPack = IShaderPack.getCurrentPack();
+        var shaderPack = IrisPack.getCurrentPack();
         boolean changed = false;
 
         for (var section : newSections) {
+            sceneDiagnostics.record(section);
             var sectionHash = section.computeSectionHash(null);
             if (sectionHashes.put(section.pos(), sectionHash) == sectionHash) continue;
 
@@ -180,7 +183,7 @@ public abstract class AbstractLightList implements Runnable, RenderingComponent 
                 if (!shouldCullLight(section, level, blockPos))
                     lights.add(
                             new TracedLightPosition(
-                                    shaderPack.map(e -> e.getBlockId(block)).orElse(-1),
+                                    shaderPack.map(e -> e.ph$getBlockId(block)).orElse(-1),
                                     new Vector3d(blockPos.ph$x(), blockPos.ph$y(), blockPos.ph$z()).add(0.5, 0.5, 0.5),
                                     block,
                                     light
@@ -200,28 +203,24 @@ public abstract class AbstractLightList implements Runnable, RenderingComponent 
             ILevel level,
             IBlockPos blockPos
     ) {
-        IChunkSection section = blockOwner;
         Vector3i sectionPos = blockOwner.pos();
 
         for (var offset : NEIGHBORS) {
             var neighborBlockPos = blockPos.ph$offset(offset);
             var blockSectionPos = SectionCopy.getSectionCoord(neighborBlockPos);
-
+            IChunkSection section = blockOwner;
             if (!blockSectionPos.equals(sectionPos)) {
-                if (blockSectionPos.equals(blockOwner.pos())) {
-                    section = blockOwner;
-                } else {
-                    var chunkAccess = level.ph$getChunkOrNull(sectionPos.x, sectionPos.z);
-                    if (chunkAccess == null) continue;
-
-                    var newSection = chunkAccess.ph$sections()[level.ph$getSectionIndexFromSectionY(sectionPos.y)];
-                    if (newSection == null) continue;
-
-                    section = newSection;
-                }
+                var chunkAccess = level.ph$getChunkOrNull(blockSectionPos.x, blockSectionPos.z);
+                // Missing neighbors cannot prove that a source is enclosed.
+                if (chunkAccess == null) return false;
+                int sectionIndex = level.ph$getSectionIndexFromSectionY(blockSectionPos.y);
+                var sections = chunkAccess.ph$sections();
+                if (sectionIndex < 0 || sectionIndex >= sections.length) return false;
+                section = sections[sectionIndex];
+                if (section == null) return false;
             }
 
-            if (section.ph$hasOnlyAir()) continue;
+            if (section.ph$hasOnlyAir()) return false;
 
             var blockState = section.ph$getBlockState(
                     neighborBlockPos.ph$x() & 15,
@@ -231,7 +230,7 @@ public abstract class AbstractLightList implements Runnable, RenderingComponent 
 
             if (blockState.ph$is(BLOCK_LAVA)) continue;
 
-            if (blockState.ph$isAir() || !blockState.ph$isSuffocating(level, blockPos) || !blockState.ph$isCollisionShapeFullBlock(level, blockPos))
+            if (blockState.ph$isAir() || !blockState.ph$isSuffocating(level, neighborBlockPos) || !blockState.ph$isCollisionShapeFullBlock(level, neighborBlockPos))
                 return false;
         }
 
@@ -322,6 +321,11 @@ public abstract class AbstractLightList implements Runnable, RenderingComponent 
 
     public long contentGeneration() {
         return contentGeneration;
+    }
+
+    /** Render-thread diagnostic snapshot of the GPU-visible light ordering. */
+    public List<TracedLightPosition> snapshot() {
+        return mostRecentLights == null ? List.of() : List.copyOf(mostRecentLights);
     }
 
     @Override

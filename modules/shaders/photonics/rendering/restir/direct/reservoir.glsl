@@ -1,14 +1,14 @@
+#ifndef PH_DIRECT_RESERVOIR_INCLUDE
+#define PH_DIRECT_RESERVOIR_INCLUDE
+
+#include "/photonics/rendering/restir/common.glsl"
 #include "/photonics/rendering/restir/direct/sample.glsl"
 #include "/photonics/rendering/restir/direct/reservoir_encoding.glsl"
 
-#define DIRECT_RESERVOIR_0 3
-#define DIRECT_RESERVOIR_1 4
-
-#if defined PH_ENABLE_GI && defined PH_RESTIR_COMBINED_GI
-#define DIRECT_CANDIDATE_RESERVOIR 7
-#else
-#define DIRECT_CANDIDATE_RESERVOIR 5
-#endif
+#define DIRECT_RESERVOIR_0 0
+#define DIRECT_RESERVOIR_1 1
+#define DIRECT_CANDIDATE_RESERVOIR 2
+#define DIRECT_OUT 3
 
 //ph_required: uniform usampler2D restir_direct_reservoirs0;
 //ph_required: uniform sampler2D restir_direct_reservoirs1;
@@ -310,3 +310,4 @@ bool direct_reservoir_load_previous(out DirectReservoir reservoir, ivec2 tex_coo
 
     return direct_sample_reproject(reservoir.smple);
 }
+#endif

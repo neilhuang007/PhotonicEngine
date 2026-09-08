@@ -41,13 +41,15 @@ public class DeferredIrisRenderer implements IrisRenderer, PipelineAction {
 
     public sealed interface Pass permits DeferredPass, ComputePass, RelativeComputePass {
         String name();
+        List<Runnable> actions();
     }
 
     public record DeferredPass(
             String name,
             @Nullable String fragmentShader,
             @Nullable String vertexShader,
-            @Nullable IrisFramebuffer framebuffer
+            @Nullable IrisFramebuffer framebuffer,
+            List<Runnable> actions
     ) implements Pass {
     }
 
@@ -56,7 +58,8 @@ public class DeferredIrisRenderer implements IrisRenderer, PipelineAction {
             @Nullable String computeShader,
             int workGroupsX,
             int workGroupsY,
-            int workGroupsZ
+            int workGroupsZ,
+            List<Runnable> actions
     ) implements Pass {
         public ComputePass {
             if (workGroupsX < 0 || workGroupsY < 0 || workGroupsZ < 0)
@@ -68,14 +71,15 @@ public class DeferredIrisRenderer implements IrisRenderer, PipelineAction {
             String name,
             @Nullable String computeShader,
             float widthScale,
-            float heightScale
+            float heightScale,
+            List<Runnable> actions
     ) implements Pass {
         public RelativeComputePass {
             if (!Float.isFinite(widthScale)
                     || !Float.isFinite(heightScale)
                     || widthScale <= 0.0f
                     || heightScale <= 0.0f) {
-                throw new IllegalArgumentException("relative compute work group scales must be finite and positive");
+                throw new IllegalArgumentException("relative compute invocation scales must be finite and positive");
             }
         }
     }

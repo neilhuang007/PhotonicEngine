@@ -26,14 +26,40 @@ loom {
             // separate from this launch configuration. When it is added, it
             // must write the generic JSON result described in the root README.
             property("photonicengine.shaderGameTest.reportFile", "automation/shader-game-test-report.json")
+            property("photonics.traceSceneChanges", providers.gradleProperty("traceSceneChanges").orElse("false").get())
+            property("photonics.traceLighting", providers.gradleProperty("traceLighting").orElse("false").get())
+            property("photonicengine.shaderGameTest.freezeTicks", providers.gradleProperty("shaderGameTestFreezeTicks").orElse("false").get())
+            property("photonicengine.shaderGameTest.traceStartup", providers.gradleProperty("shaderGameTestTraceStartup").orElse("false").get())
+            providers.gradleProperty("shaderGameTestRenderDistance").orNull?.let {
+                property("photonicengine.shaderGameTest.renderDistance", it)
+            }
+            providers.gradleProperty("shaderGameTestPitch").orNull?.let {
+                property("photonicengine.shaderGameTest.pitch", it)
+            }
+            providers.gradleProperty("shaderGameTestYaw").orNull?.let {
+                property("photonicengine.shaderGameTest.yaw", it)
+            }
+            providers.gradleProperty("shaderGameTestHotbarSlot").orNull?.let {
+                property("photonicengine.shaderGameTest.hotbarSlot", it)
+            }
         }
     }
 }
 
+val selectedShaderGameTestPack = providers.gradleProperty("shaderGameTestPack")
+    .orElse("Shrimple-ph-0.4.zip").get()
+
 val prepareShaderGameTestFixture by tasks.registering(Copy::class) {
+    val packName = selectedShaderGameTestPack
     description = "Installs the tracked shader pack used by the shader game test."
     from(layout.projectDirectory.dir("src/shaderGameTest"))
     into(layout.projectDirectory.dir("run"))
+    inputs.property("shaderGameTestPack", packName)
+    filesMatching("config/iris.properties") {
+        filter { line ->
+            if (line.startsWith("shaderPack=")) "shaderPack=$packName" else line
+        }
+    }
 }
 
 tasks.named("runShaderGameTestClient") {

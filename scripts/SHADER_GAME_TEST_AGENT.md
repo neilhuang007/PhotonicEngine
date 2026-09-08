@@ -7,6 +7,32 @@ Use the runner from the repository root:
 ```
 
 It starts `runShaderGameTestClient`, which Quick Plays the `backup` world.
+The default is the unmodified native `Shrimple-ph-0.4.zip`; select native Photon
+with `-ShaderPack Photon-0.4-support.zip`. The runner must never rewrite a pack
+archive or turn shader compilation failure into a vanilla-rendering pass.
+Normal Iris settings live in the adjacent `.zip.txt` files and are recorded,
+along with the archive SHA-256, in each report.
+
+For the stained-glass room diagnostic:
+
+```powershell
+.\scripts\run-shader-game-test.ps1 -ShaderPack Photon-0.4-support.zip -GradleArgs '-PshaderGameTestPitch=20','-PshaderGameTestYaw=180','-PshaderGameTestRenderDistance=8','-PtraceLighting=true'
+```
+
+Render distance otherwise preserves the client's setting. Two chunks do not
+provide correct native shadow-map coverage in this world. For an explicitly
+static diagnostic add `-PshaderGameTestFreezeTicks=true`; always repeat with
+normal ticking before claiming dynamic-world success. `-PshaderGameTestTraceStartup=true`
+records early roof-upload/lighting behavior rather than hiding startup frames.
+`-PshaderGameTestHotbarSlot=4` selects the fixture's sea lantern; slot 5 is
+glowstone dust and does not emit Photonics handheld light.
+
+Every launch moves prior `automation` evidence intact into the sibling
+`automation-history/<run-id>` directory. Only current-run images and reports
+belong in `automation`. Keep both failed and successful evidence; aggregate
+brightness metrics alone cannot establish clean rendering. Synchronous readback
+and optional ray diagnostics make the reported FPS unsuitable for GPU benchmarks.
+
 For interactive reporter work that does not require a result, use:
 
 ```powershell

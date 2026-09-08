@@ -1,24 +1,18 @@
+#include "/photonics/rendering/restir/common.glsl"
 #include "/photonics/rendering/restir/indirect/sample.glsl"
 #include "/photonics/utility/normal_encoding.glsl"
 
-//TODO Rename restir combined gi
-#if defined PH_ENABLE_GI && defined PH_RESTIR_COMBINED_GI
-#define PH_ENABLE_RESTIR_GI
-#endif
+#define INDIRECT_RESERVOIR_0 0
+#define INDIRECT_RESERVOIR_1 1
+#define INDIRECT_OUT 2
 
-#if defined PH_ENABLE_BLOCKLIGHT
-#define INDIRECT_RESERVOIR_0 5
-#define INDIRECT_RESERVOIR_1 6
-#else
-#define INDIRECT_RESERVOIR_0 3
-#define INDIRECT_RESERVOIR_1 4
-#endif
+uniform sampler2D gi_reservoirs0;
+uniform usampler2D gi_reservoirs1;
 
-//ph_required: uniform sampler2D restir_indirect_reservoirs0;
-//ph_required: uniform usampler2D restir_indirect_reservoirs1;
-
-//ph_required: uniform sampler2D prev_restir_indirect_reservoirs0;
-//ph_required: uniform usampler2D prev_restir_indirect_reservoirs1;
+uniform sampler2D prev_gi_reservoirs0;
+uniform usampler2D prev_gi_reservoirs1;
+uniform sampler2D gi_candidates0;
+uniform usampler2D gi_candidates1;
 
 const float max_indirect_temporal_samples = 20.0f;
 const float max_indirect_reservoir_samples = 20.0f;
@@ -57,21 +51,45 @@ bool indirect_reservoir_update(
 }
 
 bool indirect_reservoir_merge(
-    inout IndirectReservoir result,
-    IndirectReservoir other,
+    inout IndirectReservoir reservoir,
+    IndirectReservoir source,
     float jacobian,
     inout float sample_weight
 ) {
-    float other_sample_weight = ph_luminance(other.smple.color);
+    float source_sample_weight = indirect_sample_weight(source.smple);
 
-    float other_weight = other_sample_weight * other.weight * other.total_samples * jacobian;
-    if (indirect_reservoir_update(result, other.smple, other_weight, other.total_samples)) {
-        sample_weight = other_sample_weight;
+    float souce_weight = source_sample_weight * source.weight * source.total_samples * jacobian;
+    if (indirect_reservoir_update(reservoir, source.smple, souce_weight, source.total_samples)) {
+        sample_weight = source_sample_weight;
         return true;
     }
 
     return false;
 }
+
+void indirect_reservoir_reuse(
+        inout IndirectReservoir reservoir,
+        IndirectReservoir source,
+        FragData source_frag,
+        float max_samples,
+        float weight_limit,
+        inout float sample_weight
+) {
+    const float min_weight = 1.0f / weight_limit;
+    const float max_weight = weight_limit;
+
+    float jacobian = indirect_sample_compute_jacobian(source.smple, source_frag);
+    if (isnan(jacobian) || isinf(jacobian) || jacobian < min_weight || jacobian > max_weight) return;
+
+    source.total_samples = min(source.total_samples, max_samples);
+
+    float source_sample_weight = indirect_sample_weight(source.smple);
+    float source_weight = source_sample_weight * jacobian * source.weight * source.total_samples;
+    if (!indirect_reservoir_update(reservoir, source.smple, source_weight, source.total_samples)) return;
+
+    sample_weight = source_sample_weight;
+}
+
 
 void indirect_reservoir_clamp_samples(inout IndirectReservoir reservoir) {
     if (reservoir.total_samples <= max_indirect_reservoir_samples) return;
@@ -80,24 +98,35 @@ void indirect_reservoir_clamp_samples(inout IndirectReservoir reservoir) {
     reservoir.total_samples = max_indirect_reservoir_samples;
 }
 
-void indirect_reservoir_validate_visiblity(inout IndirectReservoir reservoir, vec3 rt_pos) {
+void indirect_reservoir_validate_visiblity(inout IndirectReservoir reservoir, vec3 rt_pos, out float visiblity) {
+    visiblity = 1.0f;
+
     vec3 hit_point = indirect_sample_get_hit_point(reservoir.smple);
+    vec3 direction = hit_point - rt_pos;
+    float distance_squared = dot(direction, direction);
+    if (!(distance_squared > 0.0f) || isnan(distance_squared) || isinf(distance_squared)) {
+        visiblity = 0.0f;
+        reservoir.weight = 0.0f;
+        reservoir.smple.color = vec3(0.0f);
+        return;
+    }
 
     RayIterator ray;
-    ray_iter_begin(ray, rt_pos, hit_point - rt_pos);
+    // Epsilons are in blocks, not fractions of a (potentially 10,000-block)
+    // sky connection. An unnormalized direction jumps past blockers at glass.
+    ray_iter_begin(ray, rt_pos, direction * inversesqrt(distance_squared));
 
     while (true) {
         RayResult result = ray_iter_next(ray);
 
         if (!ray_result_is_hit(result)) {
-            if (!reservoir.smple.hit_sky)
-                reservoir.weight = MINIMUM_RESERVOIR_WEIGHT;
-
-            return;
+            // Running out of traversal work is not proof of open sky.
+            if (reservoir.smple.hit_sky && !ray_iter_is_in_bounds(ray)) return;
+            break;
         }
 
         vec3 pos_diff = ray_result_position(result) - hit_point;
-        if (dot(pos_diff, pos_diff) < 0.05f) return;
+        if (!reservoir.smple.hit_sky && dot(pos_diff, pos_diff) < 0.05f) return;
 
         if (ray_result_is_transparent(result)) {
             ray_iter_skip_transparent(ray);
@@ -109,7 +138,11 @@ void indirect_reservoir_validate_visiblity(inout IndirectReservoir reservoir, ve
         break;
     }
 
-    reservoir.weight = MINIMUM_RESERVOIR_WEIGHT;
+    visiblity = 0.0f;
+    reservoir.weight = 0.0f;
+    // Encoding reserves a tiny signed weight for the sky tag. Clear radiance
+    // as well so an occluded connection remains exactly black after encoding.
+    reservoir.smple.color = vec3(0.0f);
 }
 
 void indirect_reservoir_finalize_weight(
@@ -159,24 +192,41 @@ void indirect_reservoir_decode(out IndirectReservoir reservoir, vec4 data0, uvec
 }
 
 bool indirect_reservoir_is_nan(IndirectReservoir reservoir) {
-    return isnan(reservoir.weight) || isnan(reservoir.total_samples);
+    return isnan(reservoir.weight) || isinf(reservoir.weight) ||
+            isnan(reservoir.total_samples) || isinf(reservoir.total_samples) ||
+            any(isnan(reservoir.smple.color)) || any(isinf(reservoir.smple.color)) ||
+            any(isnan(reservoir.smple.hit_point)) || any(isinf(reservoir.smple.hit_point));
+}
+
+bool indirect_reservoir_load_candidate(out IndirectReservoir reservoir, ivec2 tex_coord) {
+    indirect_reservoir_decode(reservoir, texelFetch(gi_candidates0, tex_coord, 0),
+            texelFetch(gi_candidates1, tex_coord, 0).rgb);
+    if (indirect_reservoir_is_nan(reservoir)) {
+        reservoir = indirect_reservoir_empty();
+        return false;
+    }
+    return true;
 }
 
 bool indirect_reservoir_load(out IndirectReservoir reservoir, ivec2 tex_coord) {
     indirect_reservoir_decode(
         reservoir,
-        texelFetch(restir_indirect_reservoirs0, tex_coord, 0),
-        texelFetch(restir_indirect_reservoirs1, tex_coord, 0).rgb
+        texelFetch(gi_reservoirs0, tex_coord, 0),
+        texelFetch(gi_reservoirs1, tex_coord, 0).rgb
     );
 
-    return !indirect_reservoir_is_nan(reservoir);
+    if (indirect_reservoir_is_nan(reservoir)) {
+        reservoir = indirect_reservoir_empty();
+        return false;
+    }
+    return true;
 }
 
 bool indirect_reservoir_load_previous(out IndirectReservoir reservoir, ivec2 tex_coord, bool reprojected) {
     indirect_reservoir_decode(
         reservoir,
-        texelFetch(prev_restir_indirect_reservoirs0, tex_coord, 0),
-        texelFetch(prev_restir_indirect_reservoirs1, tex_coord, 0).rgb
+        texelFetch(prev_gi_reservoirs0, tex_coord, 0),
+        texelFetch(prev_gi_reservoirs1, tex_coord, 0).rgb
     );
 
     if (reprojected) {
@@ -185,5 +235,9 @@ bool indirect_reservoir_load_previous(out IndirectReservoir reservoir, ivec2 tex
         reservoir.smple.color *= get_exposure() / get_previous_exposure();
     }
 
-    return !indirect_reservoir_is_nan(reservoir);
+    if (indirect_reservoir_is_nan(reservoir)) {
+        reservoir = indirect_reservoir_empty();
+        return false;
+    }
+    return true;
 }

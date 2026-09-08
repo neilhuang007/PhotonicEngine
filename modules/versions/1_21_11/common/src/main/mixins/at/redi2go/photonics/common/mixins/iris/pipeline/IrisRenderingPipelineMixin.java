@@ -6,7 +6,8 @@ import at.redi2go.photonics.common.iris.pipeline.IrisRenderingPipelineExt;
 import at.redi2go.photonics.common.iris.pipeline.renderer.DeferredIrisRenderer;
 import at.redi2go.photonics.common.iris.pipeline.renderer.PhotonicsRenderer;
 import at.redi2go.photonics.common.mixins.iris.ShaderPackAccessor;
-import at.redi2go.photonics.core.iris.PhotonicsExtension;
+import at.redi2go.photonics.core.iris.IrisManager;
+import at.redi2go.photonics.core.iris.rendering.PhotonicsPipeline;
 import com.google.common.collect.ImmutableList;
 import com.llamalad7.mixinextras.sugar.Local;
 import it.unimi.dsi.fastutil.objects.Object2ObjectMaps;
@@ -46,6 +47,15 @@ import java.util.function.Supplier;
 
 @Mixin(IrisRenderingPipeline.class)
 public abstract class IrisRenderingPipelineMixin implements IrisRenderingPipelineExt {
+    // Iris initializes its block-state/material maps at the start of this
+    // method, not in the pipeline constructor. Start CPU meshing only after
+    // that initialization and before the frame's uniform notifications.
+    @Inject(method = "beginLevelRendering", at = @At(value = "INVOKE",
+            target = "Lnet/irisshaders/iris/gl/GLDebug;pushGroup(ILjava/lang/String;)V", ordinal = 0))
+    private void photonics$beginMappedFrame(CallbackInfo ci) {
+        IrisManager.onFrameBegin();
+    }
+
     @Shadow
     private WorldRenderingPhase phase;
 
@@ -84,7 +94,7 @@ public abstract class IrisRenderingPipelineMixin implements IrisRenderingPipelin
     @Unique
     private GlBufferHolder bufferHolder;
     @Unique
-    private List<PhotonicsRenderer> phRenderers;
+    private List<at.redi2go.photonics.common.iris.pipeline.renderer.PhotonicsRenderer> phRenderers;
 
     @Inject(
             method = "<init>",
@@ -98,11 +108,10 @@ public abstract class IrisRenderingPipelineMixin implements IrisRenderingPipelin
         bufferHolder = new GlBufferHolder(IrisUtil.getUsedBuffers());
         phRenderers = List.of();
 
-        IrisUtil.getPhotonics()
-                .ifPresent(e -> e.registerBuffers(bufferHolder));
+        IrisManager.registerBuffers(bufferHolder);
 
         var renderers = IrisUtil.getPipelineManager().getRenderers();
-        var phRenderers = ImmutableList.<PhotonicsRenderer>builder();
+        var phRenderers = ImmutableList.<at.redi2go.photonics.common.iris.pipeline.renderer.PhotonicsRenderer>builder();
 
         for (var renderer : renderers) {
             var passes = renderer.getPasses();
@@ -114,7 +123,7 @@ public abstract class IrisRenderingPipelineMixin implements IrisRenderingPipelin
                 var pass = passes.get(i);
                 if (pass instanceof DeferredIrisRenderer.DeferredPass deferredPass) {
                     compositeSources[i] = new ProgramSource(
-                            deferredPass.name(),
+                            cleanUpFragmentName(deferredPass.fragmentShader()),
                             readSource(deferredPass.vertexShader()),
                             null,
                             null,
@@ -160,7 +169,7 @@ public abstract class IrisRenderingPipelineMixin implements IrisRenderingPipelin
             }
 
             phRenderers.add(
-                    new PhotonicsRenderer(
+                    new at.redi2go.photonics.common.iris.pipeline.renderer.PhotonicsRenderer(
                             renderer.name(),
                             (IrisRenderingPipeline) (Object) this,
                             programSet.getPackDirectives(),
@@ -193,7 +202,7 @@ public abstract class IrisRenderingPipelineMixin implements IrisRenderingPipelin
             )
     )
     public void beginTranslucents(CallbackInfo ci) {
-        IrisUtil.getPhotonics().ifPresent(PhotonicsExtension::onRender);
+        IrisManager.onRender();
     }
 
     @Override
@@ -216,6 +225,14 @@ public abstract class IrisRenderingPipelineMixin implements IrisRenderingPipelin
 
         AbsolutePackPath path = AbsolutePackPath.fromAbsolutePath(fileName.startsWith("/") ? fileName : "/" + fileName);
         return ((ShaderPackAccessor) shaderPack).getSourceProvider().apply(path);
+    }
+
+    @Unique
+    private static String cleanUpFragmentName(String fragment) {
+        fragment = fragment.substring(fragment.lastIndexOf("/") + 1);
+        fragment = fragment.substring(0, fragment.lastIndexOf("."));
+
+        return fragment;
     }
 
 }

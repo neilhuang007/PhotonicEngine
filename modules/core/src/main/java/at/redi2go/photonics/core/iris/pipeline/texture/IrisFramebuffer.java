@@ -1,9 +1,10 @@
 package at.redi2go.photonics.core.iris.pipeline.texture;
 
+import org.joml.Vector2ic;
+
 import at.redi2go.photonics.api.Disposable;
 import at.redi2go.photonics.api.gpu.textures.ITextureFormat;
 import at.redi2go.photonics.core.rendering.RenderingComponent;
-import org.joml.Vector2ic;
 
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;

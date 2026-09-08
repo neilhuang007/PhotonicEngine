@@ -17,27 +17,27 @@ class EmissiveBlockShaderRegressionTest {
         Path root = findRepositoryRoot();
         String pipelines = Files.readString(root.resolve(
                 "modules/core/src/main/java/at/redi2go/photonics/core/" +
-                        "iris/Pipelines.java"
+                        "iris/rendering/Pipelines.java"
         ));
         String fragData = readShader("rendering/frag/frag_data.glsl");
-        String fragLoad = readShader("rendering/frag/f0_load_frag.fsh");
+        String fragLoad = readShader("rendering/frag/passes/f0_load_frag.fsh");
 
         assertTrue(pipelines.contains(
-                "\"ph_frag_data1\", ITextureFormat.rgba32ui()"
+                "\"frag_data1\", ITextureFormat.rgba32ui()"
         ));
-        assertTrue(fragData.contains("uniform usampler2D ph_frag_data1"));
+        assertTrue(fragData.contains("uniform usampler2D frag_data1"));
         assertTrue(fragData.contains(
-                "uniform usampler2D prev_ph_frag_data1"
+                "uniform usampler2D prev_frag_data1"
         ));
-        assertTrue(fragLoad.contains("out uvec4 frag_data1_out;"));
-        assertTrue(fragLoad.contains("frag_data1_out = data1;"));
+        assertTrue(fragLoad.matches("(?s).*out uvec4\\s+frag_data1_out;.*"));
+        assertTrue(fragLoad.contains("frag_data1_out.y = ph_pack_normal(frag_geo_normal);"));
         assertFalse(
                 fragLoad.contains("uintBitsToFloat(data1)"),
                 "packed normals and material flags must not cross a float " +
                         "attachment that can canonicalize NaN bit patterns"
         );
         assertTrue(
-                fragLoad.contains(
+                readShader("rendering/frag/world_interface.glsl").contains(
                         "//ph_required: uniform sampler2D depthtex0;"
                 ),
                 "the standalone fragment-data pass must request depthtex0 at " +
@@ -126,7 +126,7 @@ class EmissiveBlockShaderRegressionTest {
 
     @Test
     void transparentLightTargetTerminatesVisibilityRay() throws IOException {
-        String tracing = readShader("internal/tracing/simple.glsl");
+        String tracing = readShader("internal/tracing/ph_simple.glsl");
 
         assertTrue(
                 tracing.contains(
@@ -171,7 +171,7 @@ class EmissiveBlockShaderRegressionTest {
     @Test
     void rayIteratorReturnsInitializedMissForEmptyVisibilityPaths()
             throws IOException {
-        String iterator = readShader("internal/tracing/iterator.glsl");
+        String iterator = readShader("internal/tracing/ph_iterator.glsl");
 
         int begin = iterator.indexOf("void ray_iter_begin(");
         int initializer = iterator.indexOf("ray = RayIterator(", begin);
@@ -200,9 +200,9 @@ class EmissiveBlockShaderRegressionTest {
     void transparentBlockerUsesVisibilityTransmittanceNotCoverageOpacity()
             throws IOException {
         String palette = readShader("palette.glsl");
-        String tracing = readShader("internal/tracing/simple.glsl");
+        String tracing = readShader("internal/tracing/ph_simple.glsl");
         String types = readShader("internal/tracing/types.glsl");
-        String iterator = readShader("internal/tracing/iterator.glsl");
+        String iterator = readShader("internal/tracing/ph_iterator.glsl");
         String handheld = readShader("rendering/handheld_lighting.glsl");
         String transmittanceUpdate = "light_transmittance *= " +
                 "voxel_data_visibility_transmittance(voxel_data, albedo);";
@@ -267,7 +267,7 @@ class EmissiveBlockShaderRegressionTest {
                         "granularity"
         );
         assertTrue(
-                tracing.contains(transmittanceUpdate),
+                tracing.replaceAll("\\s+", "").contains(transmittanceUpdate.replaceAll("\\s+", "")),
                 "direct light visibility must use material transmittance"
         );
         assertTrue(
@@ -291,77 +291,14 @@ class EmissiveBlockShaderRegressionTest {
     }
 
     @Test
-    void visibleLightHostSurfaceContributesEmission() throws IOException {
-        String diffusePass = readShader(
-                "rendering/restir/passes/r8_diffuse.fsh"
-        );
-
-        int emissionSample = diffusePass.indexOf(
-                "lighting.rgb += sample_visible_primary_emission()"
-        );
-        int indirectAssignment = diffusePass.indexOf(
-                "lighting.rgb = indirect_reservoir_get_final_color("
-        );
-
-        assertTrue(
-                emissionSample >= 0 && emissionSample > indirectAssignment,
-                "the final diffuse pass must add the visible light-host " +
-                        "surface emission independently of incident lighting"
-        );
-    }
-
-    @Test
-    void tintedGlassContinuesTheCameraRayToVisibleEmission()
-            throws IOException {
-        String diffusePass = readShader(
-                "rendering/restir/passes/r8_diffuse.fsh"
-        );
-
-        int cameraRay = diffusePass.indexOf(
-                "vec3 camera_ray_direction = normalize("
-        );
-        int currentSurfaceTrace = diffusePass.indexOf(
-                "ray_iter_next_block("
-        );
-        int opaqueGuard = diffusePass.indexOf(
-                "if (!frag_is_light_transmissive) return vec3(0.0f);"
-        );
-        int finiteBudget = diffusePass.indexOf(
-                "primary_ray.iterations = min("
-        );
-        int finiteDistance = diffusePass.indexOf(
-                "continuation_distance > primary_emission_max_distance"
-        );
-        int materialCheck = diffusePass.indexOf(
-                "if (!voxel_data_is_light_transmissive(voxel_data)) break;"
-        );
-        int tintAccumulation = diffusePass.indexOf(
-                "ray_iter_accumulate_transparency_tint("
-        );
-        int skip = diffusePass.indexOf(
-                "ray_iter_skip_transparent(primary_ray);"
-        );
-
-        assertTrue(
-                currentSurfaceTrace >= 0 && opaqueGuard > currentSurfaceTrace &&
-                        cameraRay > opaqueGuard && finiteBudget > cameraRay &&
-                        finiteDistance > finiteBudget,
-                "the current raster surface must be sampled first, and camera " +
-                        "continuation must be forbidden behind opaque primaries"
-        );
-        assertTrue(
-                materialCheck > finiteBudget &&
-                        tintAccumulation > materialCheck && skip > tintAccumulation,
-                "only material-transmissive primary blocks may continue, and " +
-                        "their coverage tint must be accumulated before skipping"
-        );
-        assertTrue(
-                diffusePass.contains(
-                        "primary_light.color * primary_throughput"
-                ),
-                "the first visible emissive hit behind tinted glass must be " +
-                        "filtered by the accumulated primary throughput"
-        );
+    void directResolveDoesNotDoubleCountNativeMaterialEmission() throws IOException {
+        String resolve = readShader("rendering/restir/direct/passes/di3_validate_visibility.fsh");
+        String samplers = readShader("rendering/restir/samplers.glsl");
+        assertTrue(resolve.contains("reconnection.integrand * ucw * get_exposure()"));
+        assertFalse(resolve.contains("sample_visible_primary_emission"),
+                "Direct irradiance must not contain the native material shader's surface emission");
+        assertFalse(samplers.contains("di_emission"),
+                "Incident irradiance must remain separate from native material emission");
     }
 
     @Test
@@ -386,9 +323,9 @@ class EmissiveBlockShaderRegressionTest {
     void materialTransmissionBypassesTextureAlphaAndAccumulatesTint()
             throws IOException {
         String indirectLighting = readShader("rendering/indirect_lighting.glsl");
-        String iterator = readShader("internal/tracing/iterator.glsl");
+        String iterator = readShader("internal/tracing/ph_iterator.glsl");
         String palette = readShader("palette.glsl");
-        String tracing = readShader("internal/tracing/simple.glsl");
+        String tracing = readShader("internal/tracing/ph_simple.glsl");
 
         assertTrue(
                 indirectLighting.contains(
@@ -425,12 +362,12 @@ class EmissiveBlockShaderRegressionTest {
             throws IOException {
         String fragData = readShader("rendering/frag/frag_data.glsl");
         String fragFlags = readShader("rendering/frag/flags.glsl");
-        String fragLoad = readShader("rendering/frag/f0_load_frag.fsh");
+        String fragLoad = readShader("rendering/frag/passes/f0_load_frag.fsh");
         String directSample = readShader(
                 "rendering/restir/direct/sample.glsl"
         );
         String initialDirect = readShader(
-                "rendering/restir/passes/r2_initial_direct.fsh"
+                "rendering/restir/direct/passes/di0_initial_direct.fsh"
         );
         String reconnection = readShader(
                 "rendering/restir/reservoir_splatting/reconnection.glsl"
@@ -491,7 +428,7 @@ class EmissiveBlockShaderRegressionTest {
     @Test
     void voxelTransmissionAppliesMaterialTintOncePerBlock()
             throws IOException {
-        String iterator = readShader("internal/tracing/iterator.glsl");
+        String iterator = readShader("internal/tracing/ph_iterator.glsl");
 
         int blockPosition = iterator.indexOf(
                 "ivec3 block_position = ivec3(floor(\n" +
@@ -520,7 +457,7 @@ class EmissiveBlockShaderRegressionTest {
     @Test
     void hitBlockClassificationBiasesIntegerFacesAlongRayDirection()
             throws IOException {
-        String iterator = readShader("internal/tracing/iterator.glsl");
+        String iterator = readShader("internal/tracing/ph_iterator.glsl");
 
         assertTrue(
                 iterator.contains(

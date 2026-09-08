@@ -5,7 +5,7 @@ import at.redi2go.photonics.api.gpu.buffers.IGpuBuffer;
 import at.redi2go.photonics.api.gpu.systems.IGpuDevice;
 import at.redi2go.photonics.api.gpu.systems.IRenderSystem;
 import at.redi2go.photonics.core.iris.pipeline.buffer.IBufferHolder;
-import at.redi2go.photonics.core.iris.pipeline.rendering.IrisPipeline;
+import at.redi2go.photonics.core.iris.pipeline.IrisRenderer;
 import at.redi2go.photonics.core.iris.pipeline.texture.IrisFramebuffer;
 import at.redi2go.photonics.core.iris.pipeline.uniform.IUniformHolder;
 import at.redi2go.photonics.core.iris.pipeline.uniform.IUniformUpdateFrequency;
@@ -26,8 +26,10 @@ public final class ReservoirSplattingRendering implements RenderingComponent {
     public static final int PIXEL_LOCAL_SIZE_Y = 16;
     public static final int SPATIAL_NEIGHBOR_SAMPLE_COUNT = 8192;
 
-    public static final float FULL_VIEW_WIDTH_SCALE = 1.0f / PIXEL_LOCAL_SIZE_X;
-    public static final float FULL_VIEW_HEIGHT_SCALE = 1.0f / PIXEL_LOCAL_SIZE_Y;
+    // Iris divides relative invocation extents by GLSL local_size itself.
+    // Pre-dividing by 16 here dispatches only 1/256 of the screen.
+    public static final float FULL_VIEW_WIDTH_SCALE = 1.0f;
+    public static final float FULL_VIEW_HEIGHT_SCALE = 1.0f;
 
     public static final String CLEAR_SHADER =
             "/photonics/rendering/restir/reservoir_splatting/passes/p0_clear_bins.csh";
@@ -128,40 +130,41 @@ public final class ReservoirSplattingRendering implements RenderingComponent {
      * over the complete view; shaders reject padded invocations before
      * accessing the packed buffers.
      */
-    public IrisPipeline.Builder addPasses(
-            IrisPipeline.Builder builder,
-            BooleanSupplier condition
+    public IrisRenderer.Builder addPasses(
+            IrisRenderer.Builder builder,
+            BooleanSupplier condition,
+            float renderScale
     ) {
         return builder
                 .relativeComputePass(
                         "clear reservoir splatting bins",
                         CLEAR_SHADER,
-                        FULL_VIEW_WIDTH_SCALE,
-                        FULL_VIEW_HEIGHT_SCALE,
+                        FULL_VIEW_WIDTH_SCALE * renderScale,
+                        FULL_VIEW_HEIGHT_SCALE * renderScale,
                         condition
                 )
                 .thenShaderStorageBarrier(condition)
                 .relativeComputePass(
                         "reproject previous reservoirs",
                         REPROJECT_SHADER,
-                        FULL_VIEW_WIDTH_SCALE,
-                        FULL_VIEW_HEIGHT_SCALE,
+                        FULL_VIEW_WIDTH_SCALE * renderScale,
+                        FULL_VIEW_HEIGHT_SCALE * renderScale,
                         condition
                 )
                 .thenShaderStorageBarrier(condition)
                 .relativeComputePass(
                         "compute reservoir splatting cell offsets",
                         COMPUTE_CELL_OFFSETS_SHADER,
-                        FULL_VIEW_WIDTH_SCALE,
-                        FULL_VIEW_HEIGHT_SCALE,
+                        FULL_VIEW_WIDTH_SCALE * renderScale,
+                        FULL_VIEW_HEIGHT_SCALE * renderScale,
                         condition
                 )
                 .thenShaderStorageBarrier(condition)
                 .relativeComputePass(
                         "sort reprojected reservoirs",
                         SORT_SHADER,
-                        FULL_VIEW_WIDTH_SCALE,
-                        FULL_VIEW_HEIGHT_SCALE,
+                        FULL_VIEW_WIDTH_SCALE * renderScale,
+                        FULL_VIEW_HEIGHT_SCALE * renderScale,
                         condition
                 )
                 .thenShaderStorageBarrier(condition);

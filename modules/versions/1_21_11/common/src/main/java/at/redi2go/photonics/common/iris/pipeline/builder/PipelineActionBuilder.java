@@ -44,13 +44,5 @@ public interface PipelineActionBuilder {
         return false;
     }
 
-    default boolean addBeginRepeating(int n) {
-        return false;
-    }
-
-    default boolean addEndRepeating() {
-        return false;
-    }
-
     PipelineAction buildAction();
 }

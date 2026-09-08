@@ -6,6 +6,9 @@ param(
     # report. Use this only while developing the runtime reporter interactively.
     [switch]$LaunchOnly,
 
+    # Select a normal Iris shaderpack without modifying any shader source.
+    [string]$ShaderPack,
+
     # This is deliberately a dedicated task rather than runClient: the task is
     # responsible for Quick Playing the backup test world and passing the report
     # location to the client.
@@ -128,14 +131,14 @@ function Get-NewShaderFailure {
     }
 
     if ($content -match 'Failed to load the shaderpack|Falling back to normal rendering without shaders|unexpected error: failed to read') {
-        $details = $content -split "`r?`n" |
+        $details = @($content -split "`r?`n" |
                 Where-Object {
                     $_ -match 'Failed to load the shaderpack' -or
                     $_ -match 'Falling back to normal rendering without shaders' -or
                     $_ -match 'unexpected error: failed to read' -or
                     $_ -match 'ZipException'
                 } |
-                Select-Object -Last 8
+                Select-Object -Last 8)
 
         return [pscustomobject]@{
             Result = 'shaderpack-load-failed'
@@ -151,14 +154,14 @@ function Get-NewShaderFailure {
         return $null
     }
 
-    $details = $content -split "`r?`n" |
+    $details = @($content -split "`r?`n" |
             Where-Object {
                 $_ -match 'Shader compilation log' -or
                 $_ -match 'ShaderCompileException' -or
                 $_ -match 'GLSL compile failed' -or
                 $_ -match 'Failed to create shader rendering pipeline'
             } |
-            Select-Object -Last 6
+            Select-Object -Last 6)
 
     if ($null -eq $details -or $details.Count -eq 0) {
         return [pscustomobject]@{
@@ -224,6 +227,7 @@ $shaderGameTestMutexName = if ([string]::IsNullOrWhiteSpace($env:PHOTONICS_SHADE
 }
 $testMutex = [System.Threading.Mutex]::new($false, $shaderGameTestMutexName)
 $mutexAcquired = $false
+$process = $null
 try {
     try {
         $mutexAcquired = $testMutex.WaitOne(0)
@@ -235,10 +239,26 @@ try {
         Exit-WithFailure -Result 'concurrent-run-refused' -FailureReason "Another shader game test owns $artifactDirectory."
     }
 
-    New-Item -ItemType Directory -Path $artifactDirectory -Force | Out-Null
-    if (Test-Path -LiteralPath $reportPath) {
-        Remove-Item -LiteralPath $reportPath -Force
+    if (Test-Path -LiteralPath $artifactDirectory) {
+        $runRoot = [IO.Path]::GetFullPath($fabricRunDirectory)
+        $oldArtifacts = (Resolve-Path -LiteralPath $artifactDirectory).Path
+        if ([IO.Path]::GetDirectoryName($oldArtifacts) -ne $runRoot -or
+                [IO.Path]::GetFileName($oldArtifacts) -ne 'automation' -or
+                ((Get-Item -LiteralPath $oldArtifacts).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "Refusing to move artifacts outside the test run directory: $oldArtifacts"
+        }
+        $historyRoot = Join-Path $runRoot 'automation-history'
+        New-Item -ItemType Directory -Path $historyRoot -Force | Out-Null
+        $resolvedHistory = (Resolve-Path -LiteralPath $historyRoot).Path
+        if ([IO.Path]::GetDirectoryName($resolvedHistory) -ne $runRoot -or
+                ((Get-Item -LiteralPath $resolvedHistory).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "Refusing to archive outside the test run directory: $resolvedHistory"
+        }
+        $archivePath = Join-Path $resolvedHistory ((Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '-' + [Guid]::NewGuid().ToString('N'))
+        Move-Item -LiteralPath $oldArtifacts -Destination $archivePath
+        Write-Output "previousRunArtifacts=$archivePath"
     }
+    New-Item -ItemType Directory -Path $artifactDirectory -Force | Out-Null
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $reason = 'completed'
@@ -249,6 +269,12 @@ try {
     }
 
     $gradleArgumentList = @()
+    if ($ShaderPack) {
+        if ([IO.Path]::GetFileName($ShaderPack) -ne $ShaderPack) {
+            throw 'ShaderPack must be a filename inside the shaderpacks directory.'
+        }
+        $gradleArgumentList += "-PshaderGameTestPack=$ShaderPack"
+    }
     if ($GradleArgs) {
         $gradleArgumentList += $GradleArgs
         Write-Output ("shaderGameTestGradleArgs={0}" -f ($GradleArgs -join ' '))
@@ -337,6 +363,9 @@ try {
     Write-Output 'watchdogResult=passed'
     exit 0
 } finally {
+    if ($null -ne $process -and !$process.HasExited) {
+        Stop-ProcessTree -ProcessIds @($process.Id)
+    }
     if ($mutexAcquired) {
         $testMutex.ReleaseMutex()
     }

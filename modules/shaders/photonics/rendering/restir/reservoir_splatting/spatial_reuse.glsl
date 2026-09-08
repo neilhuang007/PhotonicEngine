@@ -63,7 +63,7 @@ bool direct_spatial_trace_primary(
         rt_camera_position,
         direct_spatial_camera_ray_direction(fractional_pixel)
     );
-    RayResult primary_hit = ray_iter_next(primary_ray);
+    RayResult primary_hit = trace_opaque_camera_hit(primary_ray);
     if (!ray_result_is_hit(primary_hit)) return false;
 
     vec3 hit_position = ray_result_position(primary_hit);
