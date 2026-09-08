@@ -80,7 +80,7 @@ class EmissiveBlockShaderRegressionTest {
         int offInitialization = handheld.indexOf(
                 "HandheldSample off_hand = handheld_sample_empty();"
         );
-        int trace = handheld.indexOf("bool handheld_sample_trace(");
+        int trace = handheld.indexOf("bool handheld_sample_trace_budget(");
         int tintInitialization = handheld.indexOf(
                 "tint_color = vec3(1.0f);",
                 trace

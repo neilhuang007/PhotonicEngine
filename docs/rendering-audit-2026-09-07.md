@@ -7,7 +7,7 @@ Work in progress. Numerical game-test success is not a claim of clean rendering.
 The local branch started at `01a0f7a`; upstream `origin/multi-version` was fetched
 at `54e049b` (47 commits after merge base `3a9d6a6`). The pre-merge branch and user
 work are retained as `backup/rendering-before-sync-20260907` and the labelled
-pre-merge stash. The upstream Iris property/renderer API is being integrated;
+pre-merge stash. Merge `44596f1` integrates the upstream Iris property/renderer API;
 the local direct-light estimator is not being replaced by upstream's older one.
 
 Preserved direct-light pipeline:
@@ -261,7 +261,18 @@ Minecraft-specific optimization opportunities, pending measurement:
 
 ## Still required
 
-Inspect moving colored projections and the startup flash with complete roof geometry,
-test actual emissive handheld items and sea-lantern source faces, exercise GI and
-skylight, and repeat in the unfrozen clock world. Finish the merge and final
-regression checks only after recording the remaining limitations accurately.
+The native Photon handheld run `photon-handheld-budget-red` exposed another
+visibility bug: an exhausted ray was treated as unobstructed. Eight world probes
+returned visible with zero traversal budget (the ninth was the actual hand).
+The production handheld trace now normalizes its traversal direction and accepts
+a terminal miss only after reaching the receiver or leaving the represented
+scene; unavailable/exhausted work alone is not visibility. The same GPU oracle
+passes at all nine probes in `photon-handheld-budget-green`, with an actual sea
+lantern held. The 75 core and 8 common regression tests also pass. This does not
+prove the native pack's handheld intensity or two-hand shared visibility ideal.
+
+Inspect remaining motion softness, native Shrimple sea-lantern source emission,
+partial scene residency, and repeat in the unfrozen clock world. Photon raw
+colored projections persist with full splat dispatch and loaded roof geometry;
+the two-pass denoiser setting is still a diagnostic, not a final quality choice.
+The upstream merge is complete; rendering verification remains open.

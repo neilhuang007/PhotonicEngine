@@ -1637,6 +1637,15 @@ final class ShaderGameTestReporter {
                     values.add(List.of(pixels.get(offset), pixels.get(offset + 1), pixels.get(offset + 2), pixels.get(offset + 3)));
                 }
                 sceneRayProbes.put(name + "_reservoir_stage", values);
+                if (name.equals("probe_sun_direction")) {
+                    var budgetVisibility = new ArrayList<Float>();
+                    for (int probe = 0; probe < 9; probe++) {
+                        float visible = pixels.get((18 + probe) * 4);
+                        budgetVisibility.add(visible);
+                        if (visible > 0.0f) errors.add("Handheld ray with no traversal budget reported visible at probe " + probe);
+                    }
+                    sceneRayProbes.put("handheldZeroBudgetVisibility", budgetVisibility);
+                }
                 if (name.equals("probe_primary_hit")) {
                     for (int probe = 0; probe < values.size(); probe++) {
                         int rasterFlags = ((Number) primarySurfaceProbes.get(probe).get("flags")).intValue();

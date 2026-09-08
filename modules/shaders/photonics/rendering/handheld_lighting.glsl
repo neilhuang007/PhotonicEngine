@@ -81,20 +81,23 @@ void handheld_sample_init(
             smple.luminance >= 0.0001f;
 }
 
-bool handheld_sample_trace(in HandheldSample smple, out vec3 tint_color, out float light_transmittance) {
+bool handheld_sample_trace_budget(in HandheldSample smple, int max_iterations, out vec3 tint_color, out float light_transmittance) {
     tint_color = vec3(1.0f);
     light_transmittance = 1.0f;
     if (!smple.valid || frag_is_hand) return false;
+    if (max_iterations <= 0) return false;
+
+    float frag_dist = dot(smple.dir, smple.dir);
+    if (!(frag_dist > 0.0f) || isnan(frag_dist) || isinf(frag_dist)) return false;
 
     RayIterator ray;
 
-    ray_iter_begin(ray, smple.light.position, smple.dir);
-    ray.iterations = PH_HANDHELD_RAY_ITERATIONS;
+    ray_iter_begin(ray, smple.light.position, smple.dir * inversesqrt(frag_dist));
+    ray.iterations = max_iterations;
 
     RayResult result = missed_ray_result();
 
     vec4 running_tint_color = vec4(0.0f);
-    float frag_dist = dot(smple.dir, smple.dir);
     float ray_dist = 0.0f;
 
     while (ray_iter_has_next(ray)) {
@@ -125,7 +128,17 @@ bool handheld_sample_trace(in HandheldSample smple, out vec3 tint_color, out flo
     }
 
     tint_color = running_tint_color.a == 0.0f ? vec3(1.0f) : running_tint_color.rgb;
-    return !ray_result_is_hit(result) || (ray_dist - frag_dist) > -0.1f;
+    if (!ray_result_is_hit(ray.hit)) {
+        // A work-budget miss (or unavailable scene) is not a clear segment.
+        // Accept exhaustion only if traversal already passed the receiver.
+        float traversed = dot(ray.position - smple.light.position, smple.dir);
+        return !ray_iter_is_in_bounds(ray) || traversed >= 0.999f * frag_dist;
+    }
+    return (ray_dist - frag_dist) > -0.1f;
+}
+
+bool handheld_sample_trace(in HandheldSample smple, out vec3 tint_color, out float light_transmittance) {
+    return handheld_sample_trace_budget(smple, PH_HANDHELD_RAY_ITERATIONS, tint_color, light_transmittance);
 }
 
 vec3 handheld_sample_compute_color(

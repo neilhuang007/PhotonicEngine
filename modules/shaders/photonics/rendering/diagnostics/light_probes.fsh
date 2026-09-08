@@ -7,6 +7,7 @@
 #include "/photonics/rendering/restir/reservoir_splatting/buffers.glsl"
 #include "/photonics/rendering/restir/indirect/reservoir.glsl"
 #include "/photonics/interface/lighting_interface.glsl"
+#include "/photonics/rendering/handheld_lighting.glsl"
 layout(location = 0) out vec4 unoccluded;
 layout(location = 1) out vec4 visible;
 layout(location = 2) out vec4 first_hit;
@@ -66,6 +67,18 @@ void main() {
         sun_direction_probe = vec4(float(ph_splat_cell_count(ph_splat_pixel_index(pixel))),
                 final_reservoir.total_samples, final_reservoir.target_pdf, final_reservoir.weight_sum);
         primary_hit_probe = vec4(retained.player_pos - frag_player_pos, float(retained.flags));
+    }
+    if (light_index == 2) {
+        // No traversal work cannot establish visibility of this nonzero
+        // camera-local segment. Exercise the production handheld tracer.
+        HandheldSample hand = handheld_sample_empty();
+        hand.valid = true;
+        hand.dir = -frag_geo_normal;
+        hand.light.position = frag_rt_pos + frag_geo_normal;
+        vec3 ignored_tint;
+        float ignored_transmittance;
+        bool clear = handheld_sample_trace_budget(hand, 0, ignored_tint, ignored_transmittance);
+        sun_direction_probe = vec4(float(clear), 1.0, 0.0, 0.0);
     }
     DirectSample sample_value = DirectSample(light_index, vec2(0.5));
     Light light = direct_sample_get_light(sample_value);
