@@ -54,30 +54,42 @@ vec3 svgf_load_noisy_lighting(ivec2 texel) {
     return lighting;
 }
 
-vec3 svgf_frag_shading_normal(FragData frag) {
-    return frag_data_is_hand(frag)
-            ? frag_data_geo_normal(frag)
-            : frag_data_tex_normal(frag);
-}
-
-float svgf_temporal_geometry_weight(FragData sample_frag) {
+float svgf_temporal_geometry_weight(
+        FragData sample_frag,
+        vec3 center_shading_normal,
+        uint center_shading_packed,
+        uint center_geo_packed
+) {
     if (!frag_data_is_in_world(sample_frag) ||
             frag_data_is_hand(sample_frag) != frag_is_hand ||
             frag_data_is_light_transmissive(sample_frag) != frag_is_light_transmissive)
         return 0.0f;
 
-    vec3 sample_geo_normal = frag_data_geo_normal(sample_frag);
-    float shading_normal_weight = svgf_normal_edge_stopping_weight(
-            svgf_frag_shading_normal(_frag_data),
-            svgf_frag_shading_normal(sample_frag)
+    uint sample_shading_packed = frag_data_is_hand(sample_frag)
+            ? sample_frag.data1.y
+            : sample_frag.data1.z;
+    float shading_normal_weight = svgf_packed_normal_edge_stopping_weight(
+            center_shading_normal,
+            center_shading_packed,
+            sample_shading_packed
     );
-    float plane_weight = svgf_plane_edge_stopping_weight(
-            frag_player_pos,
-            frag_data_player_pos(sample_frag),
-            frag_geo_normal,
-            sample_geo_normal,
-            SVGF_TEMPORAL_PHI_PLANE
-    );
+    float plane_weight;
+    if (center_geo_packed == sample_frag.data1.y) {
+        plane_weight = svgf_plane_edge_stopping_weight(
+                frag_player_pos,
+                frag_data_player_pos(sample_frag),
+                frag_geo_normal,
+                SVGF_TEMPORAL_PHI_PLANE
+        );
+    } else {
+        plane_weight = svgf_plane_edge_stopping_weight(
+                frag_player_pos,
+                frag_data_player_pos(sample_frag),
+                frag_geo_normal,
+                frag_data_geo_normal(sample_frag),
+                SVGF_TEMPORAL_PHI_PLANE
+        );
+    }
     return shading_normal_weight * plane_weight;
 }
 
@@ -90,6 +102,9 @@ SvgfResponsiveStatistics svgf_gather_responsive_statistics(
     float weight_sum = 0.0f;
     ivec2 center = ivec2(floor(previous_pixel + 0.5f));
     ivec2 history_size = textureSize(prev_fast_diffuse_history, 0);
+    uint center_shading_packed = frag_is_hand ? _frag_data.data1.y : _frag_data.data1.z;
+    vec3 center_shading_normal = ph_unpack_normal(center_shading_packed);
+    uint center_geo_packed = _frag_data.data1.y;
 
     for (int i = 0; i < 9; ++i) {
         ivec2 p = center + offset[i];
@@ -98,7 +113,12 @@ SvgfResponsiveStatistics svgf_gather_responsive_statistics(
 
         FragData previous_frag;
         frag_data_load_previous(previous_frag, p);
-        float weight = kernel[i] * svgf_temporal_geometry_weight(previous_frag);
+        float weight = kernel[i] * svgf_temporal_geometry_weight(
+                previous_frag,
+                center_shading_normal,
+                center_shading_packed,
+                center_geo_packed
+        );
         vec4 responsive = texelFetch(prev_fast_diffuse_history, p, 0);
         responsive.rgb *= exposure_ratio;
         if (weight <= 0.0f || responsive.w <= 0.0f ||
@@ -128,6 +148,9 @@ SvgfNoisyStatistics svgf_gather_noisy_statistics() {
     float second_luma_moment = 0.0f;
     float weight_sum = 0.0f;
     ivec2 history_size = textureSize(diffuse_history, 0);
+    uint center_shading_packed = frag_is_hand ? _frag_data.data1.y : _frag_data.data1.z;
+    vec3 center_shading_normal = ph_unpack_normal(center_shading_packed);
+    uint center_geo_packed = _frag_data.data1.y;
 
     for (int i = 0; i < 9; ++i) {
         ivec2 p = frag_tex_coord + offset[i];
@@ -136,7 +159,12 @@ SvgfNoisyStatistics svgf_gather_noisy_statistics() {
 
         FragData sample_frag;
         frag_data_load(sample_frag, p);
-        float weight = kernel[i] * svgf_temporal_geometry_weight(sample_frag);
+        float weight = kernel[i] * svgf_temporal_geometry_weight(
+                sample_frag,
+                center_shading_normal,
+                center_shading_packed,
+                center_geo_packed
+        );
         vec3 noisy = svgf_load_noisy_lighting(p);
         if (weight <= 0.0f || any(isnan(noisy)) || any(isinf(noisy)))
             continue;
