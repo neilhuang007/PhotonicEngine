@@ -58,11 +58,19 @@ void main() {
                 continue;
 
             SampleHistory history;
-            sample_history_load(history, p);
+            if (i == SVGF_CENTER_INDEX) {
+                history = center;
+            } else {
+                sample_history_load(history, p);
+            }
             if (!sample_history_is_valid(history)) continue;
 
             FragData sample_frag;
-            frag_data_load(sample_frag, p);
+            if (i == SVGF_CENTER_INDEX) {
+                sample_frag = _frag_data;
+            } else {
+                frag_data_load(sample_frag, p);
+            }
             if (!svgf_prefilter_same_surface_class(_frag_data, sample_frag)) continue;
 
             uint sample_geo_normal_packed = sample_frag.data1.y;
