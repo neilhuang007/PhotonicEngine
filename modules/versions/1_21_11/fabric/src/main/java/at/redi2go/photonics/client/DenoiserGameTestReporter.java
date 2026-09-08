@@ -32,6 +32,8 @@ import org.lwjgl.opengl.GL45;
 import org.lwjgl.system.MemoryUtil;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -841,6 +843,80 @@ public final class DenoiserGameTestReporter {
         saveImage(directory.resolve("restored-direct.png"), c.directMean);
         saveImage(directory.resolve("restored-raw.png"), c.rawMean);
         saveImage(directory.resolve("restored-denoised.png"), c.filteredMean);
+        saveEndpointDumps(directory.resolve("endpoints"), a, b, c);
+    }
+
+    private void saveEndpointDumps(
+            Path directory, Endpoint before, Endpoint placed, Endpoint restored
+    ) throws IOException {
+        Files.createDirectories(directory);
+        List<Map<String, Object>> files = new ArrayList<>();
+        saveEndpoint(directory, files, "before", before);
+        saveEndpoint(directory, files, "placed", placed);
+        saveEndpoint(directory, files, "restored", restored);
+
+        Map<String, Object> manifest = new LinkedHashMap<>();
+        manifest.put("formatVersion", 1);
+        manifest.put("scalarType", "float32");
+        manifest.put("byteOrder", "little-endian");
+        manifest.put("width", roi.width);
+        manifest.put("height", roi.height);
+        manifest.put("valuesPerPixel", 3);
+        manifest.put("channelLayout", "interleaved");
+        manifest.put("arrayIndex", "((y * width + x) * 3) + component");
+        manifest.put("origin", "bottom-left");
+        manifest.put("rowOrder", "bottom to top");
+        manifest.put("pixelOrder", "left to right within each row");
+        manifest.put("roi", roi.toMap());
+        manifest.put("referenceFramesPerEndpoint", REFERENCE_FRAMES);
+        manifest.put("combinedGiEnabled", combinedGiEnabled);
+        manifest.put("signals", Map.of(
+                "direct", Map.of(
+                        "source", "exposure-normalized di_output",
+                        "componentOrder", List.of("r", "g", "b")),
+                "matchingRaw", Map.of(
+                        "source", combinedGiEnabled
+                                ? "exposure-normalized di_output + gi_output"
+                                : "exposure-normalized di_output",
+                        "componentOrder", List.of("r", "g", "b")),
+                "filtered", Map.of(
+                        "source", "unexposed denoise_result",
+                        "componentOrder", List.of("r", "g", "b")),
+                "geometry", Map.of(
+                        "source", "frag_data0",
+                        "componentOrder", List.of("x", "y", "z"))
+        ));
+        manifest.put("files", files);
+        Files.writeString(directory.resolve("manifest.json"),
+                GSON.toJson(manifest), StandardCharsets.UTF_8);
+    }
+
+    private static void saveEndpoint(
+            Path directory, List<Map<String, Object>> files,
+            String phase, Endpoint endpoint
+    ) throws IOException {
+        saveFloatArray(directory, files, phase, "direct", endpoint.directMean);
+        saveFloatArray(directory, files, phase, "matchingRaw", endpoint.rawMean);
+        saveFloatArray(directory, files, phase, "filtered", endpoint.filteredMean);
+        saveFloatArray(directory, files, phase, "geometry", endpoint.geometryMean);
+    }
+
+    private static void saveFloatArray(
+            Path directory, List<Map<String, Object>> files,
+            String phase, String signal, float[] values
+    ) throws IOException {
+        String fileName = phase + "-" + signal + ".f32le";
+        ByteBuffer bytes = ByteBuffer.allocate(values.length * Float.BYTES)
+                .order(ByteOrder.LITTLE_ENDIAN);
+        for (float value : values) bytes.putFloat(value);
+        Files.write(directory.resolve(fileName), bytes.array());
+        Map<String, Object> entry = new LinkedHashMap<>();
+        entry.put("phase", phase);
+        entry.put("signal", signal);
+        entry.put("path", fileName);
+        entry.put("floatCount", values.length);
+        entry.put("byteCount", bytes.capacity());
+        files.add(entry);
     }
 
     private void saveImage(Path path, float[] rgb) throws IOException {

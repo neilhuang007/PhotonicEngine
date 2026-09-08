@@ -49,6 +49,11 @@ noise, exposure drift, center receiver geometry drift, counters, effective
 fixture coordinates, GPU timings when requested, and nine cropped endpoint
 reference PNGs (DI, matching DI+GI raw input, and denoised) in
 `modules/versions/1_21_11/fabric/run/automation/denoiser-responsiveness`.
+The `endpoints` subdirectory also contains lossless float32 little-endian dumps
+of before, placed, and restored endpoint means for direct DI, matching raw
+DI+GI, filtered RGB, and `frag_data0` geometry. Its `manifest.json` records the
+dimensions, signal meanings, interleaved channel layout, and bottom-left row
+origin so paired runs can be reanalyzed later with the same geometry data.
 
 Edit attribution uses exposure-normalized `di_output`: the affected GPU frame
 requires both a world-content generation transition and a direct-light response
