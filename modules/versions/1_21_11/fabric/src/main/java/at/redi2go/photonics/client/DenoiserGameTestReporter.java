@@ -453,7 +453,7 @@ public final class DenoiserGameTestReporter {
         EdgeResult edge = EdgeResult.from(
                 beforeRef, placedRef, roi, edgeAxis);
         if (!edge.available) {
-            fail("No measurable 10-90% raw shadow boundary was found in the configured ROI.");
+            fail("Too few paired stable-geometry scanline shadow edges were measurable in the configured ROI.");
         } else if (!Double.isFinite(edge.extraWidthPixels)
                 || edge.extraWidthPixels > MAX_EDGE_GROWTH_PIXELS) {
             fail(String.format(Locale.ROOT,
@@ -510,12 +510,12 @@ public final class DenoiserGameTestReporter {
             fail("No raw DI response tied to the GPU generation was observed after "
                     + result.name + ".");
         }
-        if (result.sustainedResponseFrame == 0) {
-            fail("Denoised " + result.name + " response never sustained 90% for "
+        if (result.sustainedStepResponseFrame == 0) {
+            fail("Denoised " + result.name + " signed step response never sustained 90% for "
                     + SUSTAINED_FRAMES + " render frames.");
-        } else if (result.framesFromAffectedGpuToResponse > TARGET_RESPONSE_FRAMES) {
-            fail("Denoised " + result.name + " response took "
-                    + result.framesFromAffectedGpuToResponse
+        } else if (result.framesFromAffectedGpuToStepResponse > TARGET_RESPONSE_FRAMES) {
+            fail("Denoised " + result.name + " signed step response took "
+                    + result.framesFromAffectedGpuToStepResponse
                     + " frames after affected geometry became GPU-visible (limit "
                     + TARGET_RESPONSE_FRAMES + ").");
         }
@@ -540,14 +540,19 @@ public final class DenoiserGameTestReporter {
         long rawResponseFrame = 0;
         long eventReadyFrame = Math.max(event.serverAppliedFrame, event.clientObservedFrame);
         for (FrameSample frame : frames) {
-            double rawProgress = progress(
+            double rawConvergence = progress(
                     frame.direct, from.directMean, to.directMean, mask);
-            double filteredProgress = progress(
+            double filteredConvergence = progress(
+                    frame.filtered, from.filteredMean, to.filteredMean, mask);
+            double rawStepResponse = projectedStepResponse(
+                    frame.direct, from.directMean, to.directMean, mask);
+            double filteredStepResponse = projectedStepResponse(
                     frame.filtered, from.filteredMean, to.filteredMean, mask);
             curve.add(new ProgressSample(
                     frame.frame, millis(frame.nanos), frame.worldGeneration,
-                    frame.historyValid, frame.clientPlaced, rawProgress,
-                    filteredProgress, meanLuminance(frame.raw, mask),
+                    frame.historyValid, frame.clientPlaced, rawConvergence,
+                    filteredConvergence, rawStepResponse, filteredStepResponse,
+                    meanLuminance(frame.raw, mask),
                     meanLuminance(frame.filtered, mask),
                     meanLuminance(frame.direct, mask)
             ));
@@ -556,21 +561,29 @@ public final class DenoiserGameTestReporter {
                 gpuGenerationFrame = frame.frame;
             }
             if (rawResponseFrame == 0 && frame.frame >= eventReadyFrame
-                    && rawProgress >= RAW_AFFECTED_PROGRESS) {
+                    && rawStepResponse >= RAW_AFFECTED_PROGRESS) {
                 rawResponseFrame = frame.frame;
             }
             if (affectedGpuFrame == 0 && gpuGenerationFrame > 0
                     && frame.frame >= gpuGenerationFrame
-                    && rawProgress >= RAW_AFFECTED_PROGRESS) {
+                    && rawStepResponse >= RAW_AFFECTED_PROGRESS) {
                 affectedGpuFrame = frame.frame;
             }
         }
-        long sustained = firstSustained(curve, affectedGpuFrame);
-        long latency = sustained == 0 || affectedGpuFrame == 0
-                ? -1 : sustained - affectedGpuFrame;
+        long rawSustainedStep = firstSustained(
+                curve, affectedGpuFrame, ProgressSample::rawProjectedStepResponse);
+        long sustainedStep = firstSustained(
+                curve, affectedGpuFrame, ProgressSample::denoisedProjectedStepResponse);
+        long sustainedConvergence = firstSustained(
+                curve, affectedGpuFrame, ProgressSample::denoisedRmsConvergence);
+        long stepLatency = sustainedStep == 0 || affectedGpuFrame == 0
+                ? -1 : sustainedStep - affectedGpuFrame;
+        long convergenceLatency = sustainedConvergence == 0 || affectedGpuFrame == 0
+                ? -1 : sustainedConvergence - affectedGpuFrame;
         return new TransitionResult(
                 event.name, gpuGenerationFrame, rawResponseFrame,
-                affectedGpuFrame, sustained, latency,
+                affectedGpuFrame, rawSustainedStep, sustainedStep, stepLatency,
+                sustainedConvergence, convergenceLatency,
                 rmsStep(from.directMean, to.directMean, mask),
                 rmsStep(from.rawMean, to.rawMean, mask),
                 rmsStep(from.filteredMean, to.filteredMean, mask),
@@ -578,13 +591,18 @@ public final class DenoiserGameTestReporter {
         );
     }
 
-    private static long firstSustained(List<ProgressSample> curve, long startFrame) {
+    private static long firstSustained(
+            List<ProgressSample> curve,
+            long startFrame,
+            java.util.function.ToDoubleFunction<ProgressSample> measurement
+    ) {
         if (startFrame == 0) return 0;
         for (int index = 0; index + SUSTAINED_FRAMES <= curve.size(); index++) {
             if (curve.get(index).frame < startFrame) continue;
             boolean valid = true;
             for (int offset = 0; offset < SUSTAINED_FRAMES; offset++) {
-                if (curve.get(index + offset).filteredProgress < RESPONSE_TARGET) {
+                if (measurement.applyAsDouble(curve.get(index + offset))
+                        < RESPONSE_TARGET) {
                     valid = false;
                     break;
                 }
@@ -671,7 +689,7 @@ public final class DenoiserGameTestReporter {
         root.put("errors", List.copyOf(errors));
         Map<String, Object> metrics = new LinkedHashMap<>();
         metrics.put("scenario", SCENARIO);
-        metrics.put("protocolVersion", 1);
+        metrics.put("protocolVersion", 2);
         metrics.put("denoiser", denoiserMetrics());
         root.put("metrics", metrics);
         return root;
@@ -708,6 +726,7 @@ public final class DenoiserGameTestReporter {
         metrics.put("limitations", List.of(
                 "Raw endpoint averages are practical references, not independent high-sample ground truth.",
                 "GPU content generation is global; the affected frame additionally requires a matching raw-DI response.",
+                "Signed step response measures endpoint-directed edit energy; RMS convergence separately measures residual shape and noise settling.",
                 "Synchronous small-ROI readback changes CPU/frame pacing and is not a GPU timing measurement."
         ));
         return metrics;
@@ -1036,6 +1055,22 @@ public final class DenoiserGameTestReporter {
         return 1.0 - rmsStep(current, to, mask) / step;
     }
 
+    /** Least-squares projection onto the signed endpoint step vector. */
+    private static double projectedStepResponse(
+            float[] current, float[] from, float[] to, boolean[] mask
+    ) {
+        double numerator = 0.0;
+        double denominator = 0.0;
+        for (int pixel = 0; pixel < mask.length; pixel++) {
+            if (!mask[pixel]) continue;
+            double step = luminance(to, pixel) - luminance(from, pixel);
+            double displacement = luminance(current, pixel) - luminance(from, pixel);
+            numerator += displacement * step;
+            denominator += step * step;
+        }
+        return denominator <= 1.0e-24 ? -1.0 : numerator / denominator;
+    }
+
     private static double rmsStep(float[] a, float[] b, boolean[] mask) {
         double squared = 0.0;
         int count = 0;
@@ -1254,8 +1289,12 @@ public final class DenoiserGameTestReporter {
 
     private record ProgressSample(
             long frame, long elapsedMillis, long worldGeneration,
-            boolean historyValid, boolean clientPlaced, double rawProgress,
-            double filteredProgress, double rawMeanLuminance,
+            boolean historyValid, boolean clientPlaced,
+            double rawDirectRmsConvergence,
+            double denoisedRmsConvergence,
+            double rawProjectedStepResponse,
+            double denoisedProjectedStepResponse,
+            double rawMeanLuminance,
             double filteredMeanLuminance, double directMeanLuminance
     ) {
         Map<String, Object> toMap() {
@@ -1265,8 +1304,10 @@ public final class DenoiserGameTestReporter {
             map.put("worldGeneration", worldGeneration);
             map.put("historyValid", historyValid);
             map.put("clientEditPlaced", clientPlaced);
-            map.put("rawDirectProgress", rawProgress);
-            map.put("denoisedProgress", filteredProgress);
+            map.put("rawDirectProjectedStepResponse", rawProjectedStepResponse);
+            map.put("denoisedProjectedStepResponse", denoisedProjectedStepResponse);
+            map.put("rawDirectRmsConvergence", rawDirectRmsConvergence);
+            map.put("denoisedRmsConvergence", denoisedRmsConvergence);
             map.put("rawMeanLuminance", rawMeanLuminance);
             map.put("denoisedMeanLuminance", filteredMeanLuminance);
             map.put("directMeanLuminance", directMeanLuminance);
@@ -1276,8 +1317,13 @@ public final class DenoiserGameTestReporter {
 
     private record TransitionResult(
             String name, long gpuGenerationFrame, long rawResponseFrame,
-            long affectedGpuFrame, long sustainedResponseFrame,
-            long framesFromAffectedGpuToResponse, double rawStepRms,
+            long affectedGpuFrame,
+            long rawSustainedStepResponseFrame,
+            long sustainedStepResponseFrame,
+            long framesFromAffectedGpuToStepResponse,
+            long sustainedRmsConvergenceFrame,
+            long framesFromAffectedGpuToRmsConvergence,
+            double rawStepRms,
             double matchingRawStepRms, double filteredStepRms,
             List<ProgressSample> curve
     ) {
@@ -1287,13 +1333,25 @@ public final class DenoiserGameTestReporter {
             map.put("rawResponseFrame", rawResponseFrame);
             map.put("affectedGpuFrame", affectedGpuFrame);
             map.put("affectedGeometryGpuFrame", affectedGpuFrame);
-            map.put("sustained90PercentResponseFrame", sustainedResponseFrame);
-            map.put("framesFromAffectedGpuToResponse", framesFromAffectedGpuToResponse);
+            map.put("rawDirectSustained90PercentStepResponseFrame",
+                    rawSustainedStepResponseFrame);
+            map.put("denoisedSustained90PercentStepResponseFrame",
+                    sustainedStepResponseFrame);
+            map.put("framesFromAffectedGpuToStepResponse",
+                    framesFromAffectedGpuToStepResponse);
+            map.put("denoisedSustained90PercentRmsConvergenceFrame",
+                    sustainedRmsConvergenceFrame);
+            map.put("framesFromAffectedGpuToRmsConvergence",
+                    framesFromAffectedGpuToRmsConvergence);
             map.put("rawStepRms", rawStepRms);
             map.put("matchingRawStepRms", matchingRawStepRms);
             map.put("denoisedStepRms", filteredStepRms);
             map.put("filteredStepRetention", filteredStepRetention());
             map.put("minimumFilteredStepRetention", MIN_FILTERED_STEP_RETENTION);
+            map.put("stepResponseMetric",
+                    "signed least-squares projection onto each output's endpoint step");
+            map.put("rmsConvergenceMetric",
+                    "1 - current-to-target RMS / endpoint-step RMS");
             map.put("responseTarget", RESPONSE_TARGET);
             map.put("sustainedFrames", SUSTAINED_FRAMES);
             map.put("frames", curve.stream().map(ProgressSample::toMap).toList());
@@ -1448,104 +1506,270 @@ public final class DenoiserGameTestReporter {
     }
 
     private static final class EdgeResult {
+        private static final int SMOOTH_RADIUS = 2;
+        private static final int MIN_PAIRED_EDGES = 8;
+        private static final double MIN_EDGE_CONTRAST = MIN_RAW_STEP * 2.0;
+
         final boolean available;
         final double rawWidthPixels;
         final double filteredWidthPixels;
         final double extraWidthPixels;
         final List<Double> rawProfile;
         final List<Double> filteredProfile;
+        final List<EdgePair> pairs;
         final Axis axis;
 
         EdgeResult(boolean available, double rawWidth, double filteredWidth,
-                   List<Double> rawProfile, List<Double> filteredProfile,
+                   double extraWidth, List<Double> rawProfile,
+                   List<Double> filteredProfile, List<EdgePair> pairs,
                    Axis axis) {
             this.available = available;
             this.rawWidthPixels = rawWidth;
             this.filteredWidthPixels = filteredWidth;
-            this.extraWidthPixels = available ? filteredWidth - rawWidth : 0.0;
+            this.extraWidthPixels = extraWidth;
             this.rawProfile = rawProfile;
             this.filteredProfile = filteredProfile;
+            this.pairs = pairs;
             this.axis = axis;
         }
 
         static EdgeResult from(Endpoint before, Endpoint placed, Roi roi, Axis axis) {
             if (roi == null) return new EdgeResult(
-                    false, 0, 0, List.of(), List.of(), axis);
-            double[] raw = differenceProfile(
-                    before.directMean, placed.directMean, roi, axis,
-                    geometryMask(before, placed));
-            double[] filtered = differenceProfile(
-                    before.filteredMean, placed.filteredMean, roi, axis,
-                    geometryMask(before, placed));
-            double rawWidth = edgeWidth(raw);
-            double filteredWidth = edgeWidth(filtered);
-            return new EdgeResult(Double.isFinite(rawWidth) && Double.isFinite(filteredWidth),
-                    Double.isFinite(rawWidth) ? rawWidth : 0.0,
-                    Double.isFinite(filteredWidth) ? filteredWidth : 0.0,
-                    Arrays.stream(raw).boxed().toList(),
-                    Arrays.stream(filtered).boxed().toList(), axis);
+                    false, 0, 0, 0, List.of(), List.of(), List.of(), axis);
+            boolean[] stable = geometryMask(before, placed);
+            double[] rawCollapsed = collapsedSignedProfile(
+                    before.directMean, placed.directMean, roi, axis, stable);
+            double[] filteredCollapsed = collapsedSignedProfile(
+                    before.filteredMean, placed.filteredMean, roi, axis, stable);
+            int minor = axis == Axis.X ? roi.height : roi.width;
+            List<EdgePair> pairs = new ArrayList<>();
+            for (int scanline = 0; scanline < minor; scanline++) {
+                double[] raw = smooth(scanlineSignedProfile(
+                        before.directMean, placed.directMean, roi, axis,
+                        stable, scanline));
+                double[] filtered = smooth(scanlineSignedProfile(
+                        before.filteredMean, placed.filteredMean, roi, axis,
+                        stable, scanline));
+                int rawPeak = peak(raw, 0, raw.length);
+                if (rawPeak < 0) continue;
+                int searchRadius = Math.max(4, raw.length / 20);
+                int filteredPeak = peak(filtered,
+                        Math.max(0, rawPeak - searchRadius),
+                        Math.min(filtered.length, rawPeak + searchRadius + 1));
+                if (filteredPeak < 0) continue;
+                for (int direction : new int[] {-1, 1}) {
+                    double rawBaseline = tailMedian(raw, direction);
+                    double filteredBaseline = tailMedian(filtered, direction);
+                    EdgeWidth rawWidth = measureWidth(
+                            raw, rawPeak, direction, rawBaseline, MIN_EDGE_CONTRAST);
+                    EdgeWidth filteredWidth = measureWidth(
+                            filtered, filteredPeak, direction, filteredBaseline, 0.0);
+                    if (rawWidth == null || filteredWidth == null) continue;
+                    pairs.add(new EdgePair(
+                            scanline, direction < 0 ? "left" : "right",
+                            rawWidth.width, filteredWidth.width,
+                            filteredWidth.width - rawWidth.width,
+                            rawBaseline, filteredBaseline,
+                            rawWidth.amplitude, filteredWidth.amplitude
+                    ));
+                }
+            }
+            boolean available = pairs.size() >= MIN_PAIRED_EDGES;
+            double rawWidth = available ? median(pairs.stream()
+                    .mapToDouble(EdgePair::rawWidthPixels).toArray()) : 0.0;
+            double filteredWidth = available ? median(pairs.stream()
+                    .mapToDouble(EdgePair::filteredWidthPixels).toArray()) : 0.0;
+            double extraWidth = available ? median(pairs.stream()
+                    .mapToDouble(EdgePair::extraWidthPixels).toArray()) : 0.0;
+            return new EdgeResult(
+                    available, rawWidth, filteredWidth, extraWidth,
+                    jsonNumbers(rawCollapsed), jsonNumbers(filteredCollapsed),
+                    List.copyOf(pairs), axis
+            );
         }
 
-        private static double[] differenceProfile(
+        private static double[] scanlineSignedProfile(
+                float[] before, float[] after, Roi roi, Axis axis,
+                boolean[] stableGeometry, int scanline
+        ) {
+            int major = axis == Axis.X ? roi.width : roi.height;
+            double[] result = new double[major];
+            Arrays.fill(result, Double.NaN);
+            for (int at = 0; at < major; at++) {
+                int x = axis == Axis.X ? at : scanline;
+                int y = axis == Axis.X ? scanline : at;
+                int pixel = y * roi.width + x;
+                if (stableGeometry[pixel]) {
+                    result[at] = luminance(before, pixel)
+                            - luminance(after, pixel);
+                }
+            }
+            return result;
+        }
+
+        private static double[] collapsedSignedProfile(
                 float[] before, float[] after, Roi roi, Axis axis,
                 boolean[] stableGeometry
         ) {
             int major = axis == Axis.X ? roi.width : roi.height;
             int minor = axis == Axis.X ? roi.height : roi.width;
             double[] result = new double[major];
-            for (int m = 0; m < major; m++) {
+            for (int at = 0; at < major; at++) {
                 double sum = 0.0;
                 int count = 0;
-                for (int n = 0; n < minor; n++) {
-                    int x = axis == Axis.X ? m : n;
-                    int y = axis == Axis.X ? n : m;
+                for (int scanline = 0; scanline < minor; scanline++) {
+                    int x = axis == Axis.X ? at : scanline;
+                    int y = axis == Axis.X ? scanline : at;
                     int pixel = y * roi.width + x;
                     if (!stableGeometry[pixel]) continue;
-                    sum += Math.abs(luminance(after, pixel)
-                            - luminance(before, pixel));
+                    sum += luminance(before, pixel) - luminance(after, pixel);
                     count++;
                 }
-                result[m] = count == 0 ? 0.0 : sum / count;
+                result[at] = count == 0 ? Double.NaN : sum / count;
             }
             return result;
         }
 
-        private static double edgeWidth(double[] profile) {
-            int peak = 0;
-            for (int i = 1; i < profile.length; i++) {
-                if (profile[i] > profile[peak]) peak = i;
-            }
-            if (profile[peak] < MIN_RAW_STEP) return Double.NaN;
-            List<Double> widths = new ArrayList<>();
-            for (int direction : new int[] {-1, 1}) {
-                int at90 = -1;
-                int at10 = -1;
-                for (int index = peak; index >= 0 && index < profile.length;
-                     index += direction) {
-                    double normalized = profile[index] / profile[peak];
-                    if (at90 < 0 && normalized <= 0.90) at90 = index;
-                    if (normalized <= 0.10) {
-                        at10 = index;
-                        break;
-                    }
+        private static double[] smooth(double[] input) {
+            double[] result = new double[input.length];
+            Arrays.fill(result, Double.NaN);
+            for (int index = 0; index < input.length; index++) {
+                if (!Double.isFinite(input[index])) continue;
+                double sum = 0.0;
+                int count = 0;
+                for (int at = Math.max(0, index - SMOOTH_RADIUS);
+                     at <= Math.min(input.length - 1, index + SMOOTH_RADIUS); at++) {
+                    if (!Double.isFinite(input[at])) continue;
+                    sum += input[at];
+                    count++;
                 }
-                if (at90 >= 0 && at10 >= 0) widths.add((double) Math.abs(at10 - at90));
+                if (count >= SMOOTH_RADIUS + 1) result[index] = sum / count;
             }
-            return widths.stream().mapToDouble(Double::doubleValue).average()
-                    .orElse(Double.NaN);
+            return result;
+        }
+
+        private static int peak(double[] profile, int from, int to) {
+            int peak = -1;
+            for (int index = from; index < to; index++) {
+                if (Double.isFinite(profile[index])
+                        && (peak < 0 || profile[index] > profile[peak])) {
+                    peak = index;
+                }
+            }
+            return peak;
+        }
+
+        private static double tailMedian(double[] profile, int direction) {
+            int count = Math.max(5, profile.length / 10);
+            int from = direction < 0 ? 0 : profile.length - count;
+            int to = direction < 0 ? count : profile.length;
+            double[] values = new double[count];
+            int size = 0;
+            for (int index = from; index < to; index++) {
+                if (Double.isFinite(profile[index])) values[size++] = profile[index];
+            }
+            return size == 0 ? Double.NaN : median(Arrays.copyOf(values, size));
+        }
+
+        private static EdgeWidth measureWidth(
+                double[] profile, int peak, int direction, double baseline,
+                double minimumAmplitude
+        ) {
+            if (!Double.isFinite(baseline) || !Double.isFinite(profile[peak])) return null;
+            double amplitude = profile[peak] - baseline;
+            if (amplitude < minimumAmplitude || amplitude <= 1.0e-12) return null;
+            double threshold90 = baseline + 0.90 * amplitude;
+            double threshold10 = baseline + 0.10 * amplitude;
+            double at90 = Double.NaN;
+            double at10 = Double.NaN;
+            int previousIndex = peak;
+            double previous = profile[peak];
+            for (int index = peak + direction;
+                 index >= 0 && index < profile.length; index += direction) {
+                double value = profile[index];
+                if (!Double.isFinite(value)) return null;
+                if (!Double.isFinite(at90) && value <= threshold90) {
+                    at90 = interpolate(previousIndex, previous, index, value, threshold90);
+                }
+                if (Double.isFinite(at90) && value <= threshold10) {
+                    at10 = interpolate(previousIndex, previous, index, value, threshold10);
+                    break;
+                }
+                previousIndex = index;
+                previous = value;
+            }
+            if (!Double.isFinite(at90) || !Double.isFinite(at10)) return null;
+            return new EdgeWidth(Math.abs(at10 - at90), amplitude);
+        }
+
+        private static double interpolate(
+                int fromIndex, double fromValue, int toIndex, double toValue,
+                double threshold
+        ) {
+            if (Math.abs(toValue - fromValue) <= 1.0e-12) return toIndex;
+            double amount = (threshold - fromValue) / (toValue - fromValue);
+            amount = Math.max(0.0, Math.min(1.0, amount));
+            return fromIndex + amount * (toIndex - fromIndex);
+        }
+
+        private static double median(double[] values) {
+            if (values.length == 0) return Double.NaN;
+            Arrays.sort(values);
+            int middle = values.length / 2;
+            return values.length % 2 == 0
+                    ? (values[middle - 1] + values[middle]) * 0.5
+                    : values[middle];
+        }
+
+        private static List<Double> jsonNumbers(double[] values) {
+            List<Double> result = new ArrayList<>(values.length);
+            for (double value : values) {
+                if (Double.isFinite(value)) result.add(value);
+                else result.add(null);
+            }
+            return result;
         }
 
         Map<String, Object> toMap() {
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("available", available);
+            result.put("method", "paired per-scanline signed placement response, local tail baseline");
             result.put("axis", axis.name().toLowerCase(Locale.ROOT));
-            result.put("raw10To90WidthPixels", rawWidthPixels);
-            result.put("denoised10To90WidthPixels", filteredWidthPixels);
-            result.put("extraWidthPixels", extraWidthPixels);
+            result.put("validPairedEdges", pairs.size());
+            result.put("minimumPairedEdges", MIN_PAIRED_EDGES);
+            result.put("smoothingRadiusPixels", SMOOTH_RADIUS);
+            result.put("minimumRawContrast", MIN_EDGE_CONTRAST);
+            result.put("medianRaw10To90WidthPixels", rawWidthPixels);
+            result.put("medianDenoised10To90WidthPixels", filteredWidthPixels);
+            result.put("medianPairedExtraWidthPixels", extraWidthPixels);
             result.put("maximumExtraWidthPixels", MAX_EDGE_GROWTH_PIXELS);
-            result.put("rawPlacementDifferenceProfile", rawProfile);
-            result.put("denoisedPlacementDifferenceProfile", filteredProfile);
+            result.put("pairedEdges", pairs.stream().map(EdgePair::toMap).toList());
+            result.put("rawCollapsedSignedPlacementProfile", rawProfile);
+            result.put("denoisedCollapsedSignedPlacementProfile", filteredProfile);
             return result;
+        }
+
+        private record EdgeWidth(double width, double amplitude) { }
+
+        private record EdgePair(
+                int scanline, String side, double rawWidthPixels,
+                double filteredWidthPixels, double extraWidthPixels,
+                double rawBaseline, double filteredBaseline,
+                double rawAmplitude, double filteredAmplitude
+        ) {
+            Map<String, Object> toMap() {
+                Map<String, Object> result = new LinkedHashMap<>();
+                result.put("scanline", scanline);
+                result.put("side", side);
+                result.put("raw10To90WidthPixels", rawWidthPixels);
+                result.put("denoised10To90WidthPixels", filteredWidthPixels);
+                result.put("extraWidthPixels", extraWidthPixels);
+                result.put("rawTailBaseline", rawBaseline);
+                result.put("denoisedTailBaseline", filteredBaseline);
+                result.put("rawAmplitudeAboveBaseline", rawAmplitude);
+                result.put("denoisedAmplitudeAboveBaseline", filteredAmplitude);
+                return result;
+            }
         }
     }
 }

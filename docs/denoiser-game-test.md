@@ -58,11 +58,26 @@ when combined ReSTIR GI is enabled. This keeps unrelated GI variation out of
 the edit-timing marker while comparing filtered output with the signal it
 actually filters.
 
+The primary response curve is a signed least-squares projection of each frame
+onto that output's before-to-after endpoint vector. Its sustained 90% frame
+measures how quickly the edit's lighting energy appears, including overshoot.
+The report separately retains `1 - current-to-target RMS / endpoint-step RMS`
+as RMS convergence evidence. RMS convergence includes stochastic shape and
+noise settling and is not used as the edit-response latency gate.
+
 Per-pixel `frag_data0` endpoint comparisons form a stable receiver-geometry
 mask. Pixels whose primary geometry changes are excluded from changed-shadow,
 unchanged-noise, and edge-profile measurements, so the placed block silhouette
 does not count as receiver response. The report records accepted and rejected
 pixel counts to make the effective sample area reviewable.
+
+Edge evidence uses signed before-minus-placed response on each scanline. It
+excludes unstable geometry, applies a five-pixel moving average, derives a
+separate background level from each outer tail, and interpolates local 10% and
+90% crossings. Raw and denoised widths are paired on the same scanline and
+shadow side; the report includes every accepted pair and uses the median paired
+width increase for the quality guard. This avoids folding the perspective
+shadow shape and a nonzero Monte Carlo tail into one full-ROI profile width.
 
 Each endpoint is the average of the final 16 frames in its finite capture
 window. That average is the practical reference for this bounded regression,
