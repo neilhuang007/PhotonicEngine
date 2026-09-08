@@ -39,8 +39,14 @@ void main() {
     if (!frag_is_in_world) return;
     if (light_index == 0) {
         vec3 direction = normalize(get_sun_direction());
+        // NO_SHADOW_MAPPING packs (e.g. native Shrimple) do not implement
+        // sample_sun_color. Keep the ray probe, but mark map visibility absent.
+#if defined NO_SHADOW_MAPPING
+        sun_direction_probe = vec4(direction, -1.0);
+#else
         vec3 ignored_color = vec3(0.0);
         sun_direction_probe = vec4(direction, float(sample_sun_color(frag_player_pos, frag_geo_normal, ignored_color)));
+#endif
         RayIterator sun_ray;
         ray_iter_begin(sun_ray, frag_rt_pos, direction);
         RayResult sun_result = ray_iter_next(sun_ray);
