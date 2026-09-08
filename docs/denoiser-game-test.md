@@ -21,6 +21,12 @@ tracked fixture. Omit the property to keep the tracked fixture's pass count.
 This makes pass-count comparisons repeatable without editing pack settings
 between runs.
 
+The tracked Photon shader-game-test settings pin native Photon `TAA=false` so
+camera jitter and the pack's end-of-frame temporal resolve do not confound the
+isolated Photonics denoiser measurements. This fixture does not cover final
+image behavior with Photon TAA enabled; run a separate TAA-on end-to-end test
+for that integration.
+
 Add `-PshaderGameTestFreezeTicks=true` for the controlled-edit mode. It freezes
 background simulation while the reporter still schedules the real placement
 and removal on the integrated-server executor. The report labels this mode and
