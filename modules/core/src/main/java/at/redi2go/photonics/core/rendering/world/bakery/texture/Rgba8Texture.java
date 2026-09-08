@@ -1,9 +1,5 @@
 package at.redi2go.photonics.core.rendering.world.bakery.texture;
 
-import at.redi2go.photonics.core.rendering.world.block.TextureData;
-import org.jetbrains.annotations.Nullable;
-import org.joml.Math;
-
 import java.util.Objects;
 
 public class Rgba8Texture implements CpuTexture {
@@ -28,11 +24,13 @@ public class Rgba8Texture implements CpuTexture {
 
     @Override
     public int sample(float u, float v) {
-        int realU = Math.clamp(Math.round(u * (width - 0.5f)), 0, width - 1);
-        int realV = Math.clamp(Math.round(v * (height - 0.5f)), 0, height - 1);
+        // Normalized nearest sampling selects a texel bin, then clamps to the
+        // image edge. Rounding instead shifts bins with their atlas position.
+        int realU = Math.max(0, Math.min(width - 1, (int) Math.floor(u * width)));
+        int realV = Math.max(0, Math.min(height - 1, (int) Math.floor(v * height)));
 
         int index = (width * realV) + realU;
-        if (index > color.length) return defaultValue;
+        if (index >= color.length) return defaultValue;
 
         return fromABGR(color[index]);
     }
