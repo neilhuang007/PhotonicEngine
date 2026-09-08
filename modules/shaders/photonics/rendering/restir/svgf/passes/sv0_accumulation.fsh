@@ -43,10 +43,11 @@ struct SvgfNoisyStatistics {
     bool valid;
 };
 
-vec3 svgf_stat_center_shading_normal;
-uint svgf_stat_center_shading_packed;
-uint svgf_stat_center_geo_packed;
-vec3 svgf_stat_noisy_center;
+struct SvgfTemporalCenterGuide {
+    vec3 shading_normal;
+    uint shading_packed;
+    uint geo_packed;
+};
 
 vec3 svgf_load_noisy_lighting(ivec2 texel) {
     vec3 lighting = vec3(0.0f);
@@ -61,9 +62,7 @@ vec3 svgf_load_noisy_lighting(ivec2 texel) {
 
 float svgf_temporal_geometry_weight(
         FragData sample_frag,
-        vec3 center_shading_normal,
-        uint center_shading_packed,
-        uint center_geo_packed
+        SvgfTemporalCenterGuide center_guide
 ) {
     if (!frag_data_is_in_world(sample_frag) ||
             frag_data_is_hand(sample_frag) != frag_is_hand ||
@@ -74,12 +73,12 @@ float svgf_temporal_geometry_weight(
             ? sample_frag.data1.y
             : sample_frag.data1.z;
     float shading_normal_weight = svgf_packed_normal_edge_stopping_weight(
-            center_shading_normal,
-            center_shading_packed,
+            center_guide.shading_normal,
+            center_guide.shading_packed,
             sample_shading_packed
     );
     float plane_weight;
-    if (center_geo_packed == sample_frag.data1.y) {
+    if (center_guide.geo_packed == sample_frag.data1.y) {
         plane_weight = svgf_plane_edge_stopping_weight(
                 frag_player_pos,
                 frag_data_player_pos(sample_frag),
@@ -100,7 +99,8 @@ float svgf_temporal_geometry_weight(
 
 SvgfResponsiveStatistics svgf_gather_responsive_statistics(
         vec2 previous_pixel,
-        float exposure_ratio
+        float exposure_ratio,
+        SvgfTemporalCenterGuide center_guide
 ) {
     vec3 first_moment = vec3(0.0f);
     vec3 second_moment = vec3(0.0f);
@@ -117,9 +117,7 @@ SvgfResponsiveStatistics svgf_gather_responsive_statistics(
         frag_data_load_previous(previous_frag, p);
         float weight = kernel[i] * svgf_temporal_geometry_weight(
                 previous_frag,
-                svgf_stat_center_shading_normal,
-                svgf_stat_center_shading_packed,
-                svgf_stat_center_geo_packed
+                center_guide
         );
         vec4 responsive = texelFetch(prev_fast_diffuse_history, p, 0);
         responsive.rgb *= exposure_ratio;
@@ -145,7 +143,10 @@ SvgfResponsiveStatistics svgf_gather_responsive_statistics(
     );
 }
 
-SvgfNoisyStatistics svgf_gather_noisy_statistics() {
+SvgfNoisyStatistics svgf_gather_noisy_statistics(
+        vec3 noisy_center,
+        SvgfTemporalCenterGuide center_guide
+) {
     vec3 first_moment = vec3(0.0f);
     float second_luma_moment = 0.0f;
     float weight_sum = 0.0f;
@@ -160,16 +161,14 @@ SvgfNoisyStatistics svgf_gather_noisy_statistics() {
         vec3 noisy;
         if (i == SVGF_CENTER_INDEX) {
             sample_frag = _frag_data;
-            noisy = svgf_stat_noisy_center;
+            noisy = noisy_center;
         } else {
             frag_data_load(sample_frag, p);
             noisy = svgf_load_noisy_lighting(p);
         }
         float weight = kernel[i] * svgf_temporal_geometry_weight(
                 sample_frag,
-                svgf_stat_center_shading_normal,
-                svgf_stat_center_shading_packed,
-                svgf_stat_center_geo_packed
+                center_guide
         );
         if (weight <= 0.0f || any(isnan(noisy)) || any(isinf(noisy)))
             continue;
@@ -314,16 +313,23 @@ void main() {
     );
 #if PH_RESTIR_DENOISER_PASSES > 0 && PH_RESTIR_ACCUMULATION_FRAMES >= 12
     if (history_reprojected && temporal_history.lighting.w >= 4.0f) {
-        svgf_stat_center_shading_packed = frag_is_hand
+        uint center_shading_packed = frag_is_hand
                 ? _frag_data.data1.y
                 : _frag_data.data1.z;
-        svgf_stat_center_shading_normal = ph_unpack_normal(
-                svgf_stat_center_shading_packed
+        SvgfTemporalCenterGuide center_guide = SvgfTemporalCenterGuide(
+                ph_unpack_normal(center_shading_packed),
+                center_shading_packed,
+                _frag_data.data1.y
         );
-        svgf_stat_center_geo_packed = _frag_data.data1.y;
-        svgf_stat_noisy_center = noisy_center.rgb;
-        responsive_statistics = svgf_gather_responsive_statistics(previous_pixel, exposure_ratio);
-        noisy_statistics = svgf_gather_noisy_statistics();
+        responsive_statistics = svgf_gather_responsive_statistics(
+                previous_pixel,
+                exposure_ratio,
+                center_guide
+        );
+        noisy_statistics = svgf_gather_noisy_statistics(
+                noisy_center.rgb,
+                center_guide
+        );
     }
 #endif
 
