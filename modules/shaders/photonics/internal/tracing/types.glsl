@@ -50,6 +50,14 @@ uint ph_bitCount_64(uvec2 mask, uint width) {
     return count + bitCount(mask.y & ((1u << upper_width) - 1u));
 }
 
+bool ph_neighborhood_is_empty(uvec2 mask, uint child_index) {
+    // Children are indexed x + 4*z + 16*y. An aligned 2x2x2 group
+    // occupies one 32-bit word; it never straddles the y=2 boundary.
+    // This is the exact occupancy query, including thin and cutout geometry.
+    uint word = mask[child_index >> 5u];
+    return ((word >> (child_index & 10u)) & 0x00330033u) == 0u;
+}
+
 vec3 ph_get_mirrored_pos(vec3 pos, vec3 dir, bool range_check) {
     vec3 mirrored = uintBitsToFloat(floatBitsToUint(pos) ^ 0x7FFFFFu);
 

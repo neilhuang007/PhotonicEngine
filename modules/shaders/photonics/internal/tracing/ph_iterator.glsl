@@ -138,7 +138,7 @@ void _ray_iter_trace_next(inout RayIterator ray, vec3 target) {
 
         int adv_scale_exp = scale_exp;
 
-        if ((ph_shift_right_64(node.child_mask, child_index & 42u).x & 0x00330033u) == 0u)
+        if (ph_neighborhood_is_empty(node.child_mask, child_index))
             adv_scale_exp++;
 
         vec3 cell_min = ph_floor_scale(pos, adv_scale_exp);

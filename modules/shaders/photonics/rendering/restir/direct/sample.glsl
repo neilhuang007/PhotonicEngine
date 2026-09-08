@@ -62,6 +62,52 @@ void direct_sample_orient_shading_normals(
     }
 }
 
+// Color-only candidate evaluation. Visibility-query callers must keep using
+// get_visible_color: an occluded zero and a visible zero have different booleans.
+vec3 direct_sample_get_integrand(
+    DirectSample smple,
+    vec3 sample_pos,
+    vec3 geo_normal,
+    vec3 tex_normal,
+    bool light_transmissive_surface
+) {
+    if (direct_sample_is_empty(smple)) return vec3(0.0f);
+    Light light = direct_sample_get_light(smple);
+    if (!light_is_valid(light)) return vec3(0.0f);
+
+    vec3 light_position = direct_sample_get_position(smple, light);
+    direct_sample_orient_shading_normals(
+        light_position,
+        sample_pos,
+        light_transmissive_surface,
+        geo_normal,
+        tex_normal
+    );
+    vec3 unoccluded = light_sample_at(
+        light,
+        sample_pos,
+        light_position,
+        geo_normal,
+        tex_normal
+    );
+    // Use the pack's actual attenuation, including its normal conventions.
+    // No threshold: every nonzero or non-finite result retains the trace path.
+    if (unoccluded == vec3(0.0f)) return vec3(0.0f);
+
+    vec3 tint_color;
+    float transmittance;
+    if (!trace_light_vis(
+        sample_pos,
+        light_position - sample_pos,
+        light_position,
+        40,
+        tint_color,
+        transmittance
+    )) return vec3(0.0f);
+
+    return unoccluded * tint_color * transmittance;
+}
+
 bool direct_sample_get_visible_color_at_position(
     DirectSample smple,
     vec3 light_position,

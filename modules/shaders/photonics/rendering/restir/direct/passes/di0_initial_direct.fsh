@@ -32,14 +32,12 @@ void regir_stream_local_light_sample(
     }
 
     DirectSample smple = DirectSample(light_index, uv);
-    vec3 integrand;
-    direct_sample_get_visible_color(
+    vec3 integrand = direct_sample_get_integrand(
         smple,
         frag_rt_pos,
         frag_geo_normal,
         frag_tex_normal,
-        frag_is_light_transmissive,
-        integrand
+        frag_is_light_transmissive
     );
     float target = direct_sample_weight(integrand);
     direct_reservoir_stream_sample(

@@ -166,8 +166,9 @@ class ReservoirSplattingShaderRegressionTest {
         ));
 
         assertTrue(
-                source.contains("direct_sample_get_visible_color("),
-                "candidate generation must trace visibility before computing p-hat"
+                source.contains("direct_sample_get_integrand("),
+                "candidate generation must use the visible integrand; the color-only " +
+                        "helper may omit visibility only for exact zero contribution"
         );
         assertFalse(
                 source.contains("direct_sample_get_weight("),
