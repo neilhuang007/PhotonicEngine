@@ -108,3 +108,10 @@ not an independent high-sample ground truth; rare temporal artifacts outside
 the window can be missed. Use matched runs and multiple seeds before drawing a
 quality or performance conclusion. Synchronous ROI readback changes runtime
 cost, so elapsed CPU time and screenshot FPS are not GPU timings.
+
+ROI capture requires OpenGL 4.5 or `GL_ARB_get_texture_sub_image`. On its first
+capture, the reporter repeats a raw DI read with deliberately nondefault pixel
+packing and a bound diagnostic pixel-pack buffer, verifies identical float
+bits, and verifies that every pack parameter and buffer binding is restored.
+The run fails with a clear readback error if the capability or isolation check
+is unavailable.

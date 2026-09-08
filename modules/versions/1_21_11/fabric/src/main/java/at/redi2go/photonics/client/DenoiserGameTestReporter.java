@@ -25,7 +25,12 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import org.lwjgl.opengl.ARBGetTextureSubImage;
+import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL12;
+import org.lwjgl.opengl.GL15;
+import org.lwjgl.opengl.GL21;
 import org.lwjgl.opengl.GL30;
 import org.lwjgl.opengl.GL42;
 import org.lwjgl.opengl.GL45;
@@ -138,6 +143,9 @@ public final class DenoiserGameTestReporter {
     private boolean restoredOnFinish;
     private boolean previousTicksFrozen;
     private boolean combinedGiEnabled;
+    private boolean textureSubImageCapabilityVerified;
+    private boolean textureSubImageCore45;
+    private boolean pixelPackIsolationVerified;
 
     private DenoiserGameTestReporter(Path reportFile) {
         this.reportFile = reportFile;
@@ -356,7 +364,12 @@ public final class DenoiserGameTestReporter {
         GL42.glMemoryBarrier(GL42.GL_TEXTURE_FETCH_BARRIER_BIT
                 | GL42.GL_FRAMEBUFFER_BARRIER_BIT);
         double exposure = readExposure();
-        float[] direct = readRgba(findAttachment("di_output"), roi, false);
+        IGpuTexture2D directTexture = findAttachment("di_output");
+        float[] direct = readRgba(directTexture, roi, false);
+        if (!pixelPackIsolationVerified) {
+            verifyPixelPackIsolation(
+                    directTexture, roi, false, GL11.GL_RGBA, direct);
+        }
         float[] raw = Arrays.copyOf(direct, direct.length);
         if (combinedGiEnabled) {
             float[] indirect = readRgba(findAttachment("gi_output"), roi, false);
@@ -786,6 +799,7 @@ public final class DenoiserGameTestReporter {
         result.put("restoredFrames", restored.size());
         result.put("skippedFrames", skippedFrames);
         result.put("readbackFailures", readbackFailures);
+        result.put("pixelPackIsolationVerified", pixelPackIsolationVerified);
         result.put("referenceFramesPerEndpoint", REFERENCE_FRAMES);
         return result;
     }
@@ -952,6 +966,7 @@ public final class DenoiserGameTestReporter {
     private float[] readRgba(
             IGpuTexture2D texture, Roi area, boolean integerBits, int format
     ) {
+        verifyTextureSubImageCapability();
         int channels = format == GL11.GL_RED ? 1 : 4;
         FloatBuffer buffer = MemoryUtil.memAllocFloat(area.width * area.height * channels);
         try {
@@ -961,16 +976,17 @@ public final class DenoiserGameTestReporter {
                 throw new IllegalStateException("OpenGL error before ROI readback: 0x"
                         + Integer.toHexString(priorError));
             }
-            int[] parameters = {GL11.GL_PACK_ALIGNMENT, GL11.GL_PACK_ROW_LENGTH,
-                    GL11.GL_PACK_SKIP_ROWS, GL11.GL_PACK_SKIP_PIXELS,
-                    GL11.GL_PACK_SWAP_BYTES};
+            int[] parameters = pixelPackParameters();
             int[] previous = new int[parameters.length];
+            int previousPackBuffer = GL11.glGetInteger(
+                    GL21.GL_PIXEL_PACK_BUFFER_BINDING);
             for (int index = 0; index < parameters.length; index++) {
                 previous[index] = GL11.glGetInteger(parameters[index]);
                 GL11.glPixelStorei(parameters[index], index == 0 ? 4 : 0);
             }
+            GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER, 0);
             try {
-                GL45.glGetTextureSubImage(
+                getTextureSubImage(
                         handle, 0, area.x, area.y, 0,
                         area.width, area.height, 1,
                         format, integerBits ? GL11.GL_UNSIGNED_INT : GL11.GL_FLOAT,
@@ -981,6 +997,8 @@ public final class DenoiserGameTestReporter {
                 for (int index = 0; index < parameters.length; index++) {
                     GL11.glPixelStorei(parameters[index], previous[index]);
                 }
+                GL15.glBindBuffer(
+                        GL21.GL_PIXEL_PACK_BUFFER, previousPackBuffer);
             }
             int error = GL11.glGetError();
             if (error != GL11.GL_NO_ERROR) {
@@ -998,6 +1016,107 @@ public final class DenoiserGameTestReporter {
         } finally {
             MemoryUtil.memFree(buffer);
         }
+    }
+
+    private void verifyTextureSubImageCapability() {
+        if (textureSubImageCapabilityVerified) return;
+        var capabilities = GL.getCapabilities();
+        if (!capabilities.OpenGL45
+                && !capabilities.GL_ARB_get_texture_sub_image) {
+            throw new IllegalStateException(
+                    "Denoiser ROI readback requires OpenGL 4.5 or "
+                            + "GL_ARB_get_texture_sub_image."
+            );
+        }
+        textureSubImageCore45 = capabilities.OpenGL45;
+        textureSubImageCapabilityVerified = true;
+    }
+
+    private void getTextureSubImage(
+            int texture, int level, int x, int y, int z,
+            int width, int height, int depth, int format, int type,
+            int byteCount, long destination
+    ) {
+        if (textureSubImageCore45) {
+            GL45.glGetTextureSubImage(
+                    texture, level, x, y, z, width, height, depth,
+                    format, type, byteCount, destination);
+        } else {
+            ARBGetTextureSubImage.glGetTextureSubImage(
+                    texture, level, x, y, z, width, height, depth,
+                    format, type, byteCount, destination);
+        }
+    }
+
+    private void verifyPixelPackIsolation(
+            IGpuTexture2D texture, Roi area, boolean integerBits, int format,
+            float[] reference
+    ) {
+        int[] parameters = pixelPackParameters();
+        int[] diagnostic = {8, area.width + 13, area.height + 7, 2, 3, 1, 1};
+        int[] previous = new int[parameters.length];
+        int previousPackBuffer = GL11.glGetInteger(
+                GL21.GL_PIXEL_PACK_BUFFER_BINDING);
+        int diagnosticPbo = 0;
+        try {
+            for (int index = 0; index < parameters.length; index++) {
+                previous[index] = GL11.glGetInteger(parameters[index]);
+                GL11.glPixelStorei(parameters[index], diagnostic[index]);
+            }
+            diagnosticPbo = GL15.glGenBuffers();
+            if (diagnosticPbo == 0) {
+                throw new IllegalStateException(
+                        "Could not allocate diagnostic pixel-pack buffer.");
+            }
+            GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER, diagnosticPbo);
+            GL15.glBufferData(
+                    GL21.GL_PIXEL_PACK_BUFFER, Float.BYTES, GL15.GL_STREAM_READ);
+
+            float[] repeated = readRgba(texture, area, integerBits, format);
+            if (reference.length != repeated.length) {
+                throw new IllegalStateException(
+                        "Pixel-pack isolation changed ROI result length.");
+            }
+            for (int index = 0; index < reference.length; index++) {
+                if (Float.floatToRawIntBits(reference[index])
+                        != Float.floatToRawIntBits(repeated[index])) {
+                    throw new IllegalStateException(
+                            "Pixel-pack isolation changed raw ROI bits at float "
+                                    + index + ".");
+                }
+            }
+            if (GL11.glGetInteger(GL21.GL_PIXEL_PACK_BUFFER_BINDING)
+                    != diagnosticPbo) {
+                throw new IllegalStateException(
+                        "ROI readback did not restore the pixel-pack buffer binding.");
+            }
+            for (int index = 0; index < parameters.length; index++) {
+                if (GL11.glGetInteger(parameters[index]) != diagnostic[index]) {
+                    throw new IllegalStateException(
+                            "ROI readback did not restore pixel-pack parameter "
+                                    + parameters[index] + ".");
+                }
+            }
+            pixelPackIsolationVerified = true;
+        } finally {
+            for (int index = 0; index < parameters.length; index++) {
+                GL11.glPixelStorei(parameters[index], previous[index]);
+            }
+            GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER, previousPackBuffer);
+            if (diagnosticPbo != 0) GL15.glDeleteBuffers(diagnosticPbo);
+        }
+    }
+
+    private static int[] pixelPackParameters() {
+        return new int[] {
+                GL11.GL_PACK_ALIGNMENT,
+                GL11.GL_PACK_ROW_LENGTH,
+                GL12.GL_PACK_IMAGE_HEIGHT,
+                GL11.GL_PACK_SKIP_ROWS,
+                GL11.GL_PACK_SKIP_PIXELS,
+                GL12.GL_PACK_SKIP_IMAGES,
+                GL11.GL_PACK_SWAP_BYTES
+        };
     }
 
     private static IGpuTexture2D findAttachment(String name) {
